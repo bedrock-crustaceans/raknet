@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 tracing = "0.1"
-tokio = { version = "1.39", features = ["sync"] }
+tokio = { version = "1.39", features = ["sync", "time"] }
 tokio-util = "0.7"
 async-recursion = "1.1"
 anyhow = "1.0"

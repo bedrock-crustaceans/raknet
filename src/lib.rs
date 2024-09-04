@@ -42,7 +42,14 @@
 #![allow(dead_code)]
 #![allow(clippy::use_self)]
 
-use util::glob_export;
+/// Shorthand for `mod module; pub use module::*;`.
+#[macro_export]
+macro_rules! glob_export {
+    ($module: ident) => {
+        mod $module;
+        pub use $module::*;
+    };
+}
 
 glob_export!(ack);
 glob_export!(broadcast);
@@ -57,3 +64,4 @@ glob_export!(send_queue);
 glob_export!(send);
 glob_export!(client);
 glob_export!(job);
+glob_export!(proto);

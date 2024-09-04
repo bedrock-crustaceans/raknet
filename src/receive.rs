@@ -3,9 +3,9 @@ use std::sync::atomic::Ordering;
 use std::time::{Instant, Duration};
 
 use async_recursion::async_recursion;
-use proto::bedrock::CONNECTED_PACKET_ID;
-use proto::raknet::{Ack, ConnectedPing, ConnectionRequest, DisconnectNotification, Nak, NewIncomingConnection};
-use util::{RVec, Deserialize};
+use crate::proto::{Ack, ConnectedPing, ConnectionRequest, DisconnectNotification, Nak, NewIncomingConnection};
+
+pub const CONNECTED_PACKET_ID: u8 = 0xfe;
 
 use tokio::sync::mpsc::error::SendTimeoutError;
 
