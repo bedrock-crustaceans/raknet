@@ -5,19 +5,19 @@ use tokio_util::bytes::Buf;
 use crate::Reliability;
 
 /// Bit flag indicating that the packet is encapsulated in a frame.
-pub const CONNECTED_PEER_BIT_FLAG: u8 = 0x80;
+pub const CONNECTED_PEER_BIT_FLAG: u8 = 0b10000000;
 /// Set if the packet is an acknowledgement.
-pub const ACK_BIT_FLAG: u8 = 0x40;
+pub const ACK_BIT_FLAG: u8 = 0b01000000;
 /// Set if the packet is a negative acknowledgement.
-pub const NACK_BIT_FLAG: u8 = 0x20;
+pub const NACK_BIT_FLAG: u8 = 0b00100000;
 /// Set when the packet is a compound.
-pub const COMPOUND_BIT_FLAG: u8 = 0x10;
+pub const COMPOUND_BIT_FLAG: u8 = 0b00010000;
 /// Unknown what this is.
 /// Possibly used for Raknet congestion control.
-pub const CONTINUOUS_SEND_BIT_FLAG: u8 = 0x08;
+pub const CONTINUOUS_SEND_BIT_FLAG: u8 = 0b00001000;
 /// Unknown what this is.
 /// Possibly used for Raknet congestion control.
-pub const NEEDS_B_AND_AS_BIT_FLAG: u8 = 0x04;
+pub const NEEDS_B_AND_AS_BIT_FLAG: u8 = 0b00000100;
 
 /// Contains a set of frames.
 #[derive(Debug)]
