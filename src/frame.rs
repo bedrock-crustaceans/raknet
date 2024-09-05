@@ -1,4 +1,6 @@
-use util::{RVec, BinaryRead, BinaryWrite, Deserialize, Serialize};
+use std::io::Write;
+use byteorder::{ReadBytesExt, WriteBytesExt};
+use tokio_util::bytes::Buf;
 
 use crate::Reliability;
 
@@ -130,7 +132,7 @@ impl Serialize for Frame {
         Some(hint)
     }
     
-    fn serialize_into<W: BinaryWrite>(&self, writer: &mut W) -> anyhow::Result<()> {
+    fn serialize_into<W: Write>(&self, writer: &mut W) -> anyhow::Result<()> {
         let mut flags = (self.reliability as u8) << 5;
         if self.is_compound {
             flags |= COMPOUND_BIT_FLAG;
