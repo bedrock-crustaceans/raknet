@@ -1,0 +1,45 @@
+[package]
+name = "raknet-rust"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+description = "Asynchronous, high-performance RakNet transport library for Rust."
+authors = ["ClexaGod"]
+readme = "README.md"
+repository = "https://github.com/mcbe-rs/raknet-rust"
+homepage = "https://github.com/mcbe-rs/raknet-rust"
+documentation = "https://docs.rs/raknet-rust/latest/raknet_rust/"
+keywords = ["raknet", "udp", "tokio", "async", "game-networking"]
+categories = ["network-programming", "asynchronous", "game-development"]
+include = [
+    "Cargo.toml",
+    "README.md",
+    "LICENSE*",
+    "src/**",
+    "examples/**",
+    "tests/**",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+bitflags = "2.6"
+bytes = "1.8"
+thiserror = "2.0"
+tokio = { version = "1.48", features = ["io-util", "net", "rt", "sync", "time", "macros"] }
+socket2 = "0.6"
+libc = "0.2"
+getrandom = "0.2"
+hmac = "0.12"
+sha2 = "0.10"
+tracing = "0.1"
+zeroize = "1.8"
+dashmap = "6.1"
+parking_lot = "0.12"
+ahash = "0.8"
+
+[dev-dependencies]
+proptest = "1.6"

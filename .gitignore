@@ -1,0 +1,32 @@
+# Rust build outputs
+/target/
+**/*.rs.bk
+
+# Cargo (library-style default; remove if you want to commit lockfile)
+/Cargo.lock
+
+# Fuzzing (ignore entire fuzz workspace)
+/fuzz/
+
+# Local docs / notes
+/docs/
+
+# Runtime dumps / profiles
+*.profraw
+*.profdata
+*.gcda
+*.gcno
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+*.swo
+
+# IDE / editor files
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
