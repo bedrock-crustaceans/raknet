@@ -2,9 +2,9 @@ use std::io;
 use std::net::SocketAddr;
 use std::str::FromStr;
 
-use raknet_rust::client::{RaknetClient, RaknetClientEvent};
-use raknet_rust::connection::{Connection, RecvError};
-use raknet_rust::listener::Listener;
+use raknet_rs::client::{RaknetClient, RaknetClientEvent};
+use raknet_rs::connection::{Connection, RecvError};
+use raknet_rs::listener::Listener;
 
 fn parse_args() -> io::Result<(SocketAddr, Option<SocketAddr>)> {
     let mut listen = SocketAddr::from(([0, 0, 0, 0], 19132));

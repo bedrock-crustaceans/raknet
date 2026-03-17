@@ -3,15 +3,15 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use bytes::{Bytes, BytesMut};
-use raknet_rust::client::{
+use raknet_rs::client::{
     ClientDisconnectReason, ClientSendOptions, OfflineRejectionReason, RaknetClient,
     RaknetClientConfig, RaknetClientError, RaknetClientEvent, ReconnectPolicy,
 };
-use raknet_rust::low_level::protocol::connected::{
+use raknet_rs::low_level::protocol::connected::{
     ConnectedControlPacket, DisconnectionNotification,
 };
-use raknet_rust::low_level::transport::EventOverflowPolicy;
-use raknet_rust::server::{PeerId, RaknetServer, RaknetServerEvent};
+use raknet_rs::low_level::transport::EventOverflowPolicy;
+use raknet_rs::server::{PeerId, RaknetServer, RaknetServerEvent};
 use tokio::time::timeout;
 
 fn allocate_loopback_bind_addr() -> SocketAddr {

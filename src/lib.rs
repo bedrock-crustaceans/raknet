@@ -1,57 +1,10 @@
-//! `raknet-rust` is an asynchronous RakNet transport library.
-//!
-//! The crate exposes two API layers:
-//! - High-level application API: [`server`], [`client`], [`listener`], [`connection`]
-//! - Low-level protocol/session/transport API: [`low_level`]
-//!
-//! # Quick Start (Server)
-//! ```rust,no_run
-//! use raknet_rust::server::{RaknetServer, RaknetServerEvent};
-//!
-//! #[tokio::main(flavor = "current_thread")]
-//! async fn main() -> std::io::Result<()> {
-//!     let mut server = RaknetServer::bind("0.0.0.0:19132".parse().unwrap()).await?;
-//!
-//!     while let Some(event) = server.next_event().await {
-//!         if let RaknetServerEvent::Packet { peer_id, payload, .. } = event {
-//!             server.send(peer_id, payload).await?;
-//!         }
-//!     }
-//!
-//!     Ok(())
-//! }
-//! ```
-//!
-//! # Quick Start (Client)
-//! ```rust,no_run
-//! use raknet_rust::client::{RaknetClient, RaknetClientEvent};
-//!
-//! #[tokio::main(flavor = "current_thread")]
-//! async fn main() -> std::io::Result<()> {
-//!     let mut client = RaknetClient::connect("127.0.0.1:19132".parse().unwrap()).await?;
-//!
-//!     while let Some(event) = client.next_event().await {
-//!         match event {
-//!             RaknetClientEvent::Connected { .. } => {
-//!                 client.send(&b"hello"[..]).await?;
-//!             }
-//!             RaknetClientEvent::Packet { .. } => break,
-//!             RaknetClientEvent::Disconnected { .. } => break,
-//!             _ => {}
-//!         }
-//!     }
-//!
-//!     Ok(())
-//! }
-//! ```
 pub mod client;
 mod concurrency;
 pub mod connection;
 pub mod error;
 pub mod event;
-pub mod handshake;
 pub mod listener;
-mod protocol;
+pub mod protocol;
 pub mod proxy;
 pub mod server;
 mod session;

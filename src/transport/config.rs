@@ -2,7 +2,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use crate::error::ConfigValidationError;
-use crate::handshake::MAX_UNCONNECTED_PONG_MOTD_BYTES;
+use crate::protocol::packet::MAX_UNCONNECTED_PONG_MOTD_BYTES;
 use crate::protocol::constants::{
     DEFAULT_UNCONNECTED_MAGIC, MAXIMUM_MTU_SIZE, Magic, RAKNET_PROTOCOL_VERSION,
 };
@@ -499,7 +499,7 @@ mod tests {
         CookieMismatchGuardConfig, HandshakeHeuristicsConfig, ProcessingBudgetConfig,
         Request2ServerAddrPolicy, TransportConfig, TransportSocketTuning,
     };
-    use crate::handshake::MAX_UNCONNECTED_PONG_MOTD_BYTES;
+    use crate::protocol::packet::MAX_UNCONNECTED_PONG_MOTD_BYTES;
     use crate::protocol::constants::DEFAULT_UNCONNECTED_MAGIC;
     use crate::session::tunables::SessionTunables;
     use std::time::Duration;
@@ -512,7 +512,7 @@ mod tests {
         };
         let err = cfg
             .validate()
-            .expect_err("mtu below minimum must be rejected");
+            .expect_err("Mtu below minimum must be rejected");
         assert_eq!(err.config, "TransportConfig");
         assert_eq!(err.field, "mtu");
     }
@@ -525,7 +525,7 @@ mod tests {
         };
         let err = cfg
             .validate()
-            .expect_err("supported_protocols must not be empty");
+            .expect_err("'supported_protocols' must not be empty");
         assert_eq!(err.config, "TransportConfig");
         assert_eq!(err.field, "supported_protocols");
     }
@@ -539,7 +539,7 @@ mod tests {
         };
         let err = heuristics
             .validate()
-            .expect_err("score_threshold=0 must be rejected when enabled");
+            .expect_err("'score_threshold=0' must be rejected when enabled");
         assert_eq!(err.config, "HandshakeHeuristicsConfig");
         assert_eq!(err.field, "score_threshold");
     }

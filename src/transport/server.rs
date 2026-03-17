@@ -15,7 +15,7 @@ use tracing::{debug, warn};
 use zeroize::Zeroizing;
 
 use crate::error::DecodeError;
-use crate::handshake::{
+use crate::protocol::packet::{
     AlreadyConnected, ConnectionBanned, IncompatibleProtocolVersion, IpRecentlyConnected,
     NoFreeIncomingConnections, OfflinePacket, OpenConnectionReply1, OpenConnectionReply2,
     Request2ParsePath, UnconnectedPong,
@@ -2466,7 +2466,7 @@ mod tests {
         primary_protocol_version, supports_protocol,
     };
     use crate::error::DecodeError;
-    use crate::handshake::{
+    use crate::protocol::packet::{
         OfflinePacket, OpenConnectionRequest1, OpenConnectionRequest2, Request2ParsePath,
     };
     use crate::protocol::connected::{

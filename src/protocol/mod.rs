@@ -1,3 +1,4 @@
+pub mod packet;
 pub mod ack;
 pub mod codec;
 pub mod connected;

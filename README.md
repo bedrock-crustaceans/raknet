@@ -1,11 +1,11 @@
-# raknet-rust
+# raknet-rs
 
 [![Rust](https://img.shields.io/badge/Rust-2024_edition-000000?logo=rust)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-Stable-brightgreen)](#)
 [![Platform](https://img.shields.io/badge/Platform-%20RakNet-2ea44f)](#)
 
-`raknet-rust` is a RakNet transport library written in Rust.
+`raknet-rs` is a RakNet transport library written in Rust.
 
 It is built for modern async server/client networking and is especially useful for
 Minecraft Bedrock Edition projects (servers, proxies, and tooling), while still remaining
@@ -18,20 +18,20 @@ usable as a general RakNet library.
 With `cargo add`:
 
 ```bash
-cargo add raknet-rust
+cargo add raknet-rs
 ```
 
 Or edit `Cargo.toml` directly:
 
 ```toml
 [dependencies]
-raknet-rust = "0.2.0"
+raknet-rs = "0.2.0"
 ```
 
 ## API Surface
 
 - Stable application API lives under `client`, `server`, `listener`, `connection` and root re-exports.
-- Advanced low-level API is namespaced under `raknet_rust::low_level::{protocol, session, transport}`.
+- Advanced low-level API is namespaced under `raknet_rs::low_level::{protocol, session, transport}`.
 
 ### Usage
 
@@ -39,7 +39,7 @@ Basic server:
 
 ```rust
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use raknet_rust::server::{RaknetServer, RaknetServerEvent};
+use raknet_rs::server::{RaknetServer, RaknetServerEvent};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> std::io::Result<()> {
@@ -60,7 +60,7 @@ Basic client:
 
 ```rust
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use raknet_rust::client::{RaknetClient, RaknetClientEvent};
+use raknet_rs::client::{RaknetClient, RaknetClientEvent};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> std::io::Result<()> {
@@ -85,7 +85,7 @@ Callback facade (`on_connect / on_packet / on_disconnect`):
 ```rust
 use std::pin::Pin;
 use std::future::Future;
-use raknet_rust::server::RaknetServer;
+use raknet_rs::server::RaknetServer;
 
 fn hook_ok<'a>() -> Pin<Box<dyn Future<Output = std::io::Result<()>> + Send + 'a>> {
     Box::pin(async { Ok(()) })
@@ -111,7 +111,7 @@ Listener incoming helper:
 
 ```rust
 use std::net::SocketAddr;
-use raknet_rust::Listener;
+use raknet_rs::Listener;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> std::io::Result<()> {

@@ -1,15 +1,14 @@
 [package]
-name = "raknet-rust"
+name = "raknet-rs"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"
 description = "Asynchronous, high-performance RakNet transport library for Rust."
-authors = ["ClexaGod"]
 readme = "README.md"
-repository = "https://github.com/mcbe-rs/raknet-rust"
-homepage = "https://github.com/mcbe-rs/raknet-rust"
-documentation = "https://docs.rs/raknet-rust/latest/raknet_rust/"
+repository = "https://github.com/bedrock-crustaceans/raknet-rs"
+homepage = "https://github.com/bedrock-crustaceans/raknet-rs"
+documentation = "https://docs.rs/bedrock-crustaceans/latest/raknet-rs/"
 keywords = ["raknet", "udp", "tokio", "async", "game-networking"]
 categories = ["network-programming", "asynchronous", "game-development"]
 include = [

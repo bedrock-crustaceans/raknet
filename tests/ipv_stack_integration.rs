@@ -2,9 +2,9 @@ use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use std::time::Duration;
 
-use raknet_rust::client::{RaknetClient, RaknetClientEvent};
-use raknet_rust::low_level::transport::{ShardedRuntimeConfig, TransportConfig};
-use raknet_rust::server::{PeerId, RaknetServer, RaknetServerEvent};
+use raknet_rs::client::{RaknetClient, RaknetClientEvent};
+use raknet_rs::low_level::transport::{ShardedRuntimeConfig, TransportConfig};
+use raknet_rs::server::{PeerId, RaknetServer, RaknetServerEvent};
 use tokio::time::timeout;
 
 fn allocate_ipv4_loopback_bind_addr() -> SocketAddr {

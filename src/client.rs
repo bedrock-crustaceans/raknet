@@ -1,8 +1,3 @@
-//! High-level client API.
-//!
-//! [`RaknetClient`] manages handshake, reliability, keepalive, and event polling
-//! for a single outbound connection to a RakNet server.
-
 use std::collections::VecDeque;
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
@@ -15,7 +10,7 @@ use tokio::time::{self, sleep};
 use tracing::{debug, info, warn};
 
 use crate::error::ConfigValidationError;
-use crate::handshake::{
+use crate::protocol::packet::{
     OfflinePacket, OpenConnectionReply1, OpenConnectionReply2, OpenConnectionRequest1,
     OpenConnectionRequest2, Request2ParsePath,
 };
@@ -38,7 +33,6 @@ use crate::session::{
 pub type ClientResult<T> = Result<T, RaknetClientError>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Send policy used by [`RaknetClient::send_with_options`].
 pub struct ClientSendOptions {
     /// RakNet reliability class for outgoing payload.
     pub reliability: Reliability,
@@ -59,7 +53,6 @@ impl Default for ClientSendOptions {
 }
 
 #[derive(Debug, Clone)]
-/// Configuration for [`RaknetClient`].
 pub struct RaknetClientConfig {
     pub local_addr: Option<SocketAddr>,
     pub guid: u64,
@@ -111,7 +104,6 @@ impl Default for RaknetClientConfig {
 }
 
 impl RaknetClientConfig {
-    /// Validates configuration invariants.
     pub fn validate(&self) -> Result<(), ConfigValidationError> {
         if !(MINIMUM_MTU_SIZE..=MAXIMUM_MTU_SIZE).contains(&self.mtu) {
             return Err(ConfigValidationError::new(
@@ -1508,7 +1500,7 @@ mod tests {
         ReconnectPolicy, is_connected_control_id, is_offline_packet_id, next_backoff,
         offline_rejection_reason, should_retry_connect,
     };
-    use crate::handshake::{ConnectionBanned, OfflinePacket};
+    use crate::protocol::packet::{ConnectionBanned, OfflinePacket};
     use crate::protocol::reliability::Reliability;
     use crate::session::RakPriority;
     use std::time::Duration;

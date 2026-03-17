@@ -1,11 +1,3 @@
-//! High-level server API.
-//!
-//! [`RaknetServer`] provides an event-driven surface over the sharded transport
-//! runtime. For ergonomic integration, use:
-//! - [`ServerFacade`] for closure-based hooks
-//! - [`EventFacade`] for handler-trait hooks
-//! - [`SessionFacade`] for session-id based hooks
-
 use std::collections::VecDeque;
 use std::future::Future;
 use std::io;
@@ -17,7 +9,7 @@ use tracing::{debug, info, warn};
 
 use crate::concurrency::{FastMap, fast_map};
 use crate::error::ConfigValidationError;
-use crate::handshake::OfflinePacket;
+use crate::protocol::packet::OfflinePacket;
 use crate::protocol::reliability::Reliability;
 use crate::protocol::sequence24::Sequence24;
 use crate::session::RakPriority;

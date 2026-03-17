@@ -270,7 +270,7 @@ mod tests {
 
     use super::{RaknetEvent, RaknetEventKind, RaknetEventSource};
     use crate::client::RaknetClientEvent;
-    use crate::handshake::{OfflinePacket, UnconnectedPing};
+    use crate::protocol::packet::{OfflinePacket, UnconnectedPing};
     use crate::protocol::constants::DEFAULT_UNCONNECTED_MAGIC;
     use crate::protocol::reliability::Reliability;
     use crate::proxy::{

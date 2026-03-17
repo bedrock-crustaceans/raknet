@@ -1,8 +1,3 @@
-//! Per-peer connection API returned by [`crate::listener::Listener`].
-//!
-//! [`Connection`] offers message-oriented send/recv methods.
-//! [`ConnectionIo`] adapts it to Tokio [`AsyncRead`] / [`AsyncWrite`].
-
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;

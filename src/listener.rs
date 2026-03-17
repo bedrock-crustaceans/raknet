@@ -1,7 +1,3 @@
-//! Listener-oriented API built on top of [`crate::server::RaknetServer`].
-//!
-//! [`Listener`] accepts inbound peers and exposes them as [`Connection`] objects.
-
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
