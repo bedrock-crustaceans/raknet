@@ -1,20 +1,27 @@
-pub mod ack;
-pub mod codec;
-pub mod connected;
+macro_rules! expose_modules {
+    (
+        $(
+            $module:ident => { $($item:ident),* }
+        ),* $(,)?
+    ) => {
+        $(
+            pub mod $module;
+            pub use $module::{ $($item),* };
+        )*
+    };
+}
+
+expose_modules! {
+    ack => { AckNackPayload, SequenceRange },
+    codec => { RaknetCodec },
+    connected => { ConnectedControlPacket },
+    datagram => { Datagram, DatagramHeader, DatagramPayload },
+    frame => { Frame, SplitInfo },
+    frame_header => { FrameHeader },
+    reliability => { Reliability },
+    sequence24 => { Sequence24 }
+}
+
 pub mod constants;
-pub mod datagram;
-pub mod frame;
-pub mod frame_header;
 pub mod packet;
 pub mod primitives;
-pub mod reliability;
-pub mod sequence24;
-
-pub use ack::{AckNackPayload, SequenceRange};
-pub use codec::RaknetCodec;
-pub use connected::ConnectedControlPacket;
-pub use datagram::{Datagram, DatagramHeader, DatagramPayload};
-pub use frame::{Frame, SplitInfo};
-pub use frame_header::FrameHeader;
-pub use reliability::Reliability;
-pub use sequence24::Sequence24;
