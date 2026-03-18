@@ -1,4 +1,3 @@
-pub mod packet;
 pub mod ack;
 pub mod codec;
 pub mod connected;
@@ -6,6 +5,7 @@ pub mod constants;
 pub mod datagram;
 pub mod frame;
 pub mod frame_header;
+pub mod packet;
 pub mod primitives;
 pub mod reliability;
 pub mod sequence24;

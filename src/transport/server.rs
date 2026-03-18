@@ -15,11 +15,6 @@ use tracing::{debug, warn};
 use zeroize::Zeroizing;
 
 use crate::error::DecodeError;
-use crate::protocol::packet::{
-    AlreadyConnected, ConnectionBanned, IncompatibleProtocolVersion, IpRecentlyConnected,
-    NoFreeIncomingConnections, OfflinePacket, OpenConnectionReply1, OpenConnectionReply2,
-    Request2ParsePath, UnconnectedPong,
-};
 use crate::protocol::connected::{
     ConnectedControlPacket, ConnectedPing, ConnectedPong, ConnectionRequestAccepted,
     SYSTEM_ADDRESS_COUNT,
@@ -27,6 +22,11 @@ use crate::protocol::connected::{
 use crate::protocol::constants::{MAXIMUM_MTU_SIZE, MINIMUM_MTU_SIZE, RAKNET_PROTOCOL_VERSION};
 use crate::protocol::datagram::{Datagram, DatagramPayload};
 use crate::protocol::frame::Frame;
+use crate::protocol::packet::{
+    AlreadyConnected, ConnectionBanned, IncompatibleProtocolVersion, IpRecentlyConnected,
+    NoFreeIncomingConnections, OfflinePacket, OpenConnectionReply1, OpenConnectionReply2,
+    Request2ParsePath, UnconnectedPong,
+};
 use crate::protocol::reliability::Reliability;
 use crate::protocol::sequence24::Sequence24;
 use crate::session::{
@@ -2466,9 +2466,6 @@ mod tests {
         primary_protocol_version, supports_protocol,
     };
     use crate::error::DecodeError;
-    use crate::protocol::packet::{
-        OfflinePacket, OpenConnectionRequest1, OpenConnectionRequest2, Request2ParsePath,
-    };
     use crate::protocol::connected::{
         ConnectedControlPacket, ConnectedPing, ConnectionRequest, DetectLostConnection,
         DisconnectionNotification,
@@ -2479,6 +2476,9 @@ mod tests {
     use crate::protocol::datagram::{Datagram, DatagramHeader, DatagramPayload};
     use crate::protocol::frame::Frame;
     use crate::protocol::frame_header::FrameHeader;
+    use crate::protocol::packet::{
+        OfflinePacket, OpenConnectionRequest1, OpenConnectionRequest2, Request2ParsePath,
+    };
     use crate::protocol::reliability::Reliability;
     use crate::protocol::sequence24::Sequence24;
     use crate::session::tunables::SessionTunables;

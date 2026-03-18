@@ -2,11 +2,11 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use bytes::BytesMut;
 use proptest::prelude::*;
-use raknet_rs::protocol::packet::OfflinePacket;
 use raknet_rs::low_level::protocol::ack::{AckNackPayload, SequenceRange};
 use raknet_rs::low_level::protocol::codec::RaknetCodec;
 use raknet_rs::low_level::protocol::datagram::Datagram;
 use raknet_rs::low_level::protocol::sequence24::Sequence24;
+use raknet_rs::protocol::packet::OfflinePacket;
 
 proptest! {
     #![proptest_config(ProptestConfig {

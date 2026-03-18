@@ -10,10 +10,6 @@ use tokio::time::{self, sleep};
 use tracing::{debug, info, warn};
 
 use crate::error::ConfigValidationError;
-use crate::protocol::packet::{
-    OfflinePacket, OpenConnectionReply1, OpenConnectionReply2, OpenConnectionRequest1,
-    OpenConnectionRequest2, Request2ParsePath,
-};
 use crate::protocol::connected::{
     ConnectedControlPacket, ConnectedPing, ConnectedPong, ConnectionRequest,
     ConnectionRequestAccepted, DetectLostConnection, DisconnectionNotification,
@@ -24,6 +20,10 @@ use crate::protocol::constants::{
     RAKNET_PROTOCOL_VERSION,
 };
 use crate::protocol::datagram::Datagram;
+use crate::protocol::packet::{
+    OfflinePacket, OpenConnectionReply1, OpenConnectionReply2, OpenConnectionRequest1,
+    OpenConnectionRequest2, Request2ParsePath,
+};
 use crate::protocol::reliability::Reliability;
 use crate::protocol::sequence24::Sequence24;
 use crate::session::{

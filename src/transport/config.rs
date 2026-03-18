@@ -2,10 +2,10 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use crate::error::ConfigValidationError;
-use crate::protocol::packet::MAX_UNCONNECTED_PONG_MOTD_BYTES;
 use crate::protocol::constants::{
     DEFAULT_UNCONNECTED_MAGIC, MAXIMUM_MTU_SIZE, Magic, RAKNET_PROTOCOL_VERSION,
 };
+use crate::protocol::packet::MAX_UNCONNECTED_PONG_MOTD_BYTES;
 use crate::session::tunables::SessionTunables;
 
 #[derive(Debug, Clone, Copy)]
@@ -499,8 +499,8 @@ mod tests {
         CookieMismatchGuardConfig, HandshakeHeuristicsConfig, ProcessingBudgetConfig,
         Request2ServerAddrPolicy, TransportConfig, TransportSocketTuning,
     };
-    use crate::protocol::packet::MAX_UNCONNECTED_PONG_MOTD_BYTES;
     use crate::protocol::constants::DEFAULT_UNCONNECTED_MAGIC;
+    use crate::protocol::packet::MAX_UNCONNECTED_PONG_MOTD_BYTES;
     use crate::session::tunables::SessionTunables;
     use std::time::Duration;
 
