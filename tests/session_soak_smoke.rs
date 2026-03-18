@@ -36,7 +36,7 @@ fn multi_session_loss_and_reorder_soak_smoke_stays_bounded() {
                     queue_result,
                     QueuePayloadResult::Enqueued { .. } | QueuePayloadResult::Deferred
                 ),
-                "unexpected queue result during soak: {queue_result:?}"
+                "Unexpected queue result during soak: {queue_result:?}"
             );
 
             let outbound = session.on_tick(now, 6, 64 * 1024, 6, 64 * 1024);
@@ -74,26 +74,26 @@ fn multi_session_loss_and_reorder_soak_smoke_stays_bounded() {
             max_pending_bytes = max_pending_bytes.max(session.pending_outgoing_bytes());
             assert!(
                 session.pending_outgoing_bytes() <= tunables.outgoing_queue_max_bytes,
-                "pending bytes exceeded configured hard budget"
+                "Pending bytes exceeded configured hard budget"
             );
             assert!(
                 session.pending_outgoing_frames() <= tunables.outgoing_queue_max_frames,
-                "pending frames exceeded configured hard budget"
+                "Pending frames exceeded configured hard budget"
             );
             assert!(
                 !session.take_backpressure_disconnect(),
-                "soak smoke should not trigger hard backpressure disconnect"
+                "Soak smoke should not trigger hard backpressure disconnect"
             );
         }
     }
 
-    assert!(total_acks > 0, "soak should produce at least one ACK");
+    assert!(total_acks > 0, "Soak should produce at least one ACK");
     assert!(
         max_pending_bytes < tunables.outgoing_queue_max_bytes,
-        "queue should stay bounded below hard limit"
+        "Queue should stay bounded below hard limit"
     );
     assert!(
         total_nacks > 0,
-        "soak profile should exercise at least one NACK branch"
+        "Soak profile should exercise at least one NACK branch"
     );
 }

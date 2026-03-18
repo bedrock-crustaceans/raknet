@@ -44,12 +44,12 @@ fn reliable_send_is_throttled_by_congestion_window_until_ack() {
     assert_eq!(
         first.len(),
         1,
-        "cwnd=1 must allow only one reliable datagram"
+        "'cwnd=1' must allow only one reliable datagram"
     );
     let seq = first[0].header.sequence;
 
     let blocked = default_tick(&mut session, now + Duration::from_millis(1), 2);
-    assert_eq!(blocked, 0, "second datagram must wait for ACK");
+    assert_eq!(blocked, 0, "Second datagram must wait for ACK");
 
     session.handle_ack_payload(AckNackPayload {
         ranges: vec![SequenceRange {
@@ -62,7 +62,7 @@ fn reliable_send_is_throttled_by_congestion_window_until_ack() {
     let after_ack = default_tick(&mut session, now + Duration::from_millis(31), 2);
     assert_eq!(
         after_ack, 1,
-        "after ACK, queued reliable datagram must flow"
+        "After ACK, queued reliable datagram must flow"
     );
 }
 
@@ -86,7 +86,7 @@ fn karn_rule_skips_srtt_update_for_retransmitted_datagram() {
     let seq = sent[0].header.sequence;
 
     let resent = session.collect_resendable(now + Duration::from_secs(2), 4, usize::MAX);
-    assert_eq!(resent.len(), 1, "timeout should produce one resend");
+    assert_eq!(resent.len(), 1, "Timeout should produce one resend");
 
     session.handle_ack_payload(AckNackPayload {
         ranges: vec![SequenceRange {
@@ -167,7 +167,7 @@ fn resend_rto_is_clamped_to_configured_min_after_fast_ack_samples() {
         ));
         let send_at = start + Duration::from_millis((i * 10) as u64);
         let sent = session.on_tick(send_at, 1, 64 * 1024, 0, 0);
-        assert_eq!(sent.len(), 1, "payload must be emitted for RTT sample");
+        assert_eq!(sent.len(), 1, "Payload must be emitted for RTT sample");
         let seq = sent[0].header.sequence;
 
         session.handle_ack_payload(AckNackPayload {
@@ -249,7 +249,7 @@ fn high_latency_profile_is_less_aggressive_on_nack_loss_than_conservative() {
     let high_latency_ratio = high_latency_after / high_latency_before.max(1.0);
     assert!(
         high_latency_ratio >= conservative_ratio,
-        "high-latency profile should be at least as conservative on NACK loss (high={}, conservative={})",
+        "High-latency profile should be at least as conservative on NACK loss (high={}, conservative={})",
         high_latency_ratio,
         conservative_ratio
     );
@@ -270,7 +270,7 @@ fn pending_outgoing_bytes_return_to_zero_after_flush() {
 
     assert!(
         session.pending_outgoing_bytes() > 0,
-        "queued bytes must increase after enqueue"
+        "Queued bytes must increase after enqueue"
     );
 
     let sent = session.on_tick(Instant::now(), 8, 64 * 1024, 0, 0);
@@ -348,7 +348,7 @@ fn nack_for_reliable_datagram_triggers_resend_before_timeout() {
     let resent = session.on_tick(now + Duration::from_millis(5), 0, 0, 4, usize::MAX);
     assert!(
         resent.iter().any(|d| d.header.sequence == seq),
-        "nack should schedule immediate resend of the same datagram sequence"
+        "Nack should schedule immediate resend of the same datagram sequence"
     );
 }
 

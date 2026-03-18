@@ -16,17 +16,17 @@ use tokio::time::timeout;
 
 fn allocate_loopback_bind_addr() -> SocketAddr {
     let socket = std::net::UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
-        .expect("ephemeral loopback bind must succeed");
+        .expect("Ephemeral loopback bind must succeed");
     socket
         .local_addr()
-        .expect("ephemeral local addr must be available")
+        .expect("Ephemeral local addr must be available")
 }
 
 fn encode_control(packet: ConnectedControlPacket) -> Bytes {
     let mut out = BytesMut::new();
     packet
         .encode(&mut out)
-        .expect("control packet encoding should succeed");
+        .expect("Control packet encoding should succeed");
     out.freeze()
 }
 
@@ -75,8 +75,8 @@ async fn next_non_metrics_server_event(server: &mut RaknetServer) -> RaknetServe
     loop {
         let event = timeout(Duration::from_secs(3), server.next_event())
             .await
-            .expect("timed out waiting for server event")
-            .expect("server event stream unexpectedly ended");
+            .expect("Timed out waiting for server event")
+            .expect("Server event stream unexpectedly ended");
         if !matches!(
             event,
             RaknetServerEvent::Metrics { .. } | RaknetServerEvent::OfflinePacket { .. }
@@ -96,8 +96,8 @@ async fn wait_for_server_peer_connected(server: &mut RaknetServer) -> (PeerId, S
             shard_id,
         } = next_non_metrics_server_event(server).await
         {
-            assert_eq!(shard_id, 0, "single-shard server must report shard 0");
-            assert_ne!(client_guid, 0, "client_guid must be populated");
+            assert_eq!(shard_id, 0, "Single-shard server must report shard 0");
+            assert_ne!(client_guid, 0, "'client_guid' must be populated");
             return (peer_id, addr);
         }
     }
@@ -110,22 +110,22 @@ async fn wait_for_client_packet(client: &mut RaknetClient) -> Bytes {
     while Instant::now() < deadline {
         let event = timeout(Duration::from_secs(3), client.next_event())
             .await
-            .expect("timed out waiting for client event")
-            .expect("client event stream unexpectedly ended");
+            .expect("Timed out waiting for client event")
+            .expect("Client event stream unexpectedly ended");
 
         match event {
             RaknetClientEvent::Packet { payload, .. } => return payload,
             RaknetClientEvent::DecodeError { error } => {
-                panic!("unexpected client decode error: {error}")
+                panic!("Unexpected client decode error: {error}")
             }
             RaknetClientEvent::Disconnected { reason } => {
-                panic!("client disconnected unexpectedly: {reason:?}")
+                panic!("Client disconnected unexpectedly: {reason:?}")
             }
             RaknetClientEvent::Connected { .. } | RaknetClientEvent::ReceiptAcked { .. } => {}
         }
     }
 
-    panic!("timed out waiting for client packet");
+    panic!("Timed out waiting for client packet");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -136,14 +136,14 @@ async fn client_connects_and_exchanges_packets_with_server() -> io::Result<()> {
 
     match timeout(Duration::from_secs(3), client.next_event())
         .await
-        .expect("timed out waiting for connected event")
-        .expect("client event stream unexpectedly ended")
+        .expect("Timed out waiting for connected event")
+        .expect("Client event stream unexpectedly ended")
     {
         RaknetClientEvent::Connected { server_addr, mtu } => {
             assert_eq!(server_addr, bind_addr);
             assert!((576..=1400).contains(&mtu));
         }
-        other => panic!("expected connected event, got {other:?}"),
+        other => panic!("Expected connected event, got {other:?}"),
     }
 
     let payload = Bytes::from_static(b"\xFEclient->server");
@@ -163,7 +163,7 @@ async fn client_connects_and_exchanges_packets_with_server() -> io::Result<()> {
             assert_eq!(addr, peer_addr);
             assert_eq!(got_payload, payload);
         }
-        other => panic!("expected packet event after connect, got {other:?}"),
+        other => panic!("Expected packet event after connect, got {other:?}"),
     }
 
     let echo = Bytes::from_static(b"\xFEserver->client");
@@ -184,8 +184,8 @@ async fn client_surfaces_remote_disconnection_notification() -> io::Result<()> {
 
     let _ = timeout(Duration::from_secs(3), client.next_event())
         .await
-        .expect("timed out waiting for connected event")
-        .expect("client event stream unexpectedly ended");
+        .expect("Timed out waiting for connected event")
+        .expect("Client event stream unexpectedly ended");
 
     client.send(Bytes::from_static(b"\xFEhello")).await?;
     let (peer_id, _) = wait_for_server_peer_connected(&mut server).await;
@@ -199,8 +199,8 @@ async fn client_surfaces_remote_disconnection_notification() -> io::Result<()> {
     while Instant::now() < deadline {
         let event = timeout(Duration::from_secs(3), client.next_event())
             .await
-            .expect("timed out waiting for client disconnect event")
-            .expect("client event stream unexpectedly ended");
+            .expect("Timed out waiting for client disconnect event")
+            .expect("Client event stream unexpectedly ended");
 
         match event {
             RaknetClientEvent::Disconnected { reason } => {
@@ -220,7 +220,7 @@ async fn client_surfaces_remote_disconnection_notification() -> io::Result<()> {
         }
     }
 
-    panic!("timed out waiting for remote disconnect event");
+    panic!("Timed out waiting for remote disconnect event");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -231,8 +231,8 @@ async fn client_send_with_receipt_emits_receipt_acked_event() -> io::Result<()> 
 
     let _ = timeout(Duration::from_secs(3), client.next_event())
         .await
-        .expect("timed out waiting for connected event")
-        .expect("client event stream unexpectedly ended");
+        .expect("Timed out waiting for connected event")
+        .expect("Client event stream unexpectedly ended");
 
     let receipt_id = 0xAA55_AA55_AA55_AA55;
     client
@@ -250,8 +250,8 @@ async fn client_send_with_receipt_emits_receipt_acked_event() -> io::Result<()> 
     while Instant::now() < deadline {
         let event = timeout(Duration::from_secs(3), client.next_event())
             .await
-            .expect("timed out waiting for receipt ack event")
-            .expect("client event stream unexpectedly ended");
+            .expect("Timed out waiting for receipt ack event")
+            .expect("Client event stream unexpectedly ended");
 
         match event {
             RaknetClientEvent::ReceiptAcked {
@@ -263,7 +263,7 @@ async fn client_send_with_receipt_emits_receipt_acked_event() -> io::Result<()> 
                 return Ok(());
             }
             RaknetClientEvent::Disconnected { reason } => {
-                panic!("unexpected disconnect before receipt ack: {reason:?}");
+                panic!("Unexpected disconnect before receipt ack: {reason:?}");
             }
             RaknetClientEvent::Connected { .. }
             | RaknetClientEvent::Packet { .. }
@@ -271,7 +271,7 @@ async fn client_send_with_receipt_emits_receipt_acked_event() -> io::Result<()> 
         }
     }
 
-    panic!("timed out waiting for receipt ack event");
+    panic!("Timed out waiting for receipt ack event");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -282,8 +282,8 @@ async fn server_send_with_receipt_emits_receipt_acked_event() -> io::Result<()> 
 
     let _ = timeout(Duration::from_secs(3), client.next_event())
         .await
-        .expect("timed out waiting for connected event")
-        .expect("client event stream unexpectedly ended");
+        .expect("Timed out waiting for connected event")
+        .expect("Client event stream unexpectedly ended");
 
     let (peer_id, peer_addr) = wait_for_server_peer_connected(&mut server).await;
 
@@ -325,7 +325,7 @@ async fn server_send_with_receipt_emits_receipt_acked_event() -> io::Result<()> 
                 return Ok(());
             }
             RaknetServerEvent::PeerDisconnected { reason, .. } => {
-                panic!("unexpected server-side disconnect before receipt ack: {reason:?}");
+                panic!("Unexpected server-side disconnect before receipt ack: {reason:?}");
             }
             RaknetServerEvent::PeerConnected { .. }
             | RaknetServerEvent::PeerRateLimited { .. }
@@ -337,7 +337,7 @@ async fn server_send_with_receipt_emits_receipt_acked_event() -> io::Result<()> 
         }
     }
 
-    panic!("timed out waiting for server-side receipt ack event");
+    panic!("Timed out waiting for server-side receipt ack event");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -355,15 +355,15 @@ async fn client_idle_timeout_closes_connection_without_inbound_activity() -> io:
     let mut client = RaknetClient::connect_with_config(bind_addr, cfg).await?;
     let _ = timeout(Duration::from_secs(3), client.next_event())
         .await
-        .expect("timed out waiting for connected event")
-        .expect("client event stream unexpectedly ended");
+        .expect("Timed out waiting for connected event")
+        .expect("Client event stream unexpectedly ended");
 
     let deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < deadline {
         let event = timeout(Duration::from_secs(3), client.next_event())
             .await
-            .expect("timed out waiting for idle timeout event")
-            .expect("client event stream unexpectedly ended");
+            .expect("Timed out waiting for idle timeout event")
+            .expect("Client event stream unexpectedly ended");
 
         if let RaknetClientEvent::Disconnected { reason } = event {
             assert_eq!(reason, ClientDisconnectReason::IdleTimeout);
@@ -372,7 +372,7 @@ async fn client_idle_timeout_closes_connection_without_inbound_activity() -> io:
         }
     }
 
-    panic!("timed out waiting for idle timeout disconnect");
+    panic!("Timed out waiting for idle timeout disconnect");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -382,7 +382,7 @@ async fn connect_maps_incompatible_protocol_to_explicit_error() -> io::Result<()
 
     let result = RaknetClient::connect(bind_addr).await;
     let error = match result {
-        Ok(_) => panic!("connect should fail with incompatible protocol"),
+        Ok(_) => panic!("Connect should fail with incompatible protocol"),
         Err(error) => error,
     };
 
@@ -419,7 +419,7 @@ async fn connect_with_retry_fast_fails_on_offline_rejection() -> io::Result<()> 
     let elapsed = start.elapsed();
 
     let error = match result {
-        Ok(_) => panic!("connect_with_retry should fail with incompatible protocol"),
+        Ok(_) => panic!("Connect_with_retry should fail with incompatible protocol"),
         Err(error) => error,
     };
 
@@ -431,7 +431,7 @@ async fn connect_with_retry_fast_fails_on_offline_rejection() -> io::Result<()> 
     ));
     assert!(
         elapsed < Duration::from_secs(1),
-        "fast-fail should not spend retry backoff budget"
+        "Fast-fail should not spend retry backoff budget"
     );
 
     server.shutdown().await?;

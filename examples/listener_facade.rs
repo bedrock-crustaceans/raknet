@@ -20,7 +20,7 @@ fn parse_args() -> io::Result<(SocketAddr, Option<SocketAddr>)> {
                 listen = SocketAddr::from_str(&value).map_err(|error| {
                     io::Error::new(
                         io::ErrorKind::InvalidInput,
-                        format!("invalid --listen value '{value}': {error}"),
+                        format!("Invalid --listen value '{value}': {error}"),
                     )
                 })?;
             }
@@ -31,7 +31,7 @@ fn parse_args() -> io::Result<(SocketAddr, Option<SocketAddr>)> {
                 upstream = Some(SocketAddr::from_str(&value).map_err(|error| {
                     io::Error::new(
                         io::ErrorKind::InvalidInput,
-                        format!("invalid --upstream value '{value}': {error}"),
+                        format!("Invalid --upstream value '{value}': {error}"),
                     )
                 })?);
             }
@@ -46,7 +46,7 @@ fn parse_args() -> io::Result<(SocketAddr, Option<SocketAddr>)> {
             other => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    format!("unknown argument: {other}"),
+                    format!("Unknown argument: {other}"),
                 ));
             }
         }
@@ -61,13 +61,13 @@ async fn wait_client_connected(client: &mut RaknetClient) -> io::Result<()> {
             Some(RaknetClientEvent::Connected { .. }) => return Ok(()),
             Some(RaknetClientEvent::Disconnected { reason }) => {
                 return Err(io::Error::other(format!(
-                    "upstream disconnected before connected state: {reason:?}"
+                    "Upstream disconnected before connected state: {reason:?}"
                 )));
             }
             Some(RaknetClientEvent::Packet { .. })
             | Some(RaknetClientEvent::ReceiptAcked { .. })
             | Some(RaknetClientEvent::DecodeError { .. }) => {}
-            None => return Err(io::Error::other("upstream event stream ended unexpectedly")),
+            None => return Err(io::Error::other("Upstream event stream ended unexpectedly")),
         }
     }
 }
@@ -85,7 +85,7 @@ async fn run_echo(mut connection: Connection) -> io::Result<()> {
                 break;
             }
             Err(RecvError::DecodeError { message }) => {
-                eprintln!("[listener_facade] downstream decode error: {message}");
+                eprintln!("[listener_facade] Downstream decode error: {message}");
             }
         }
     }
@@ -108,7 +108,7 @@ async fn run_proxy(mut connection: Connection, upstream_addr: SocketAddr) -> io:
                         break;
                     }
                     Err(RecvError::DecodeError { message }) => {
-                        eprintln!("[listener_facade] downstream decode error: {message}");
+                        eprintln!("[listener_facade] Downstream decode error: {message}");
                     }
                 }
             }
@@ -116,16 +116,16 @@ async fn run_proxy(mut connection: Connection, upstream_addr: SocketAddr) -> io:
                 match upstream_event {
                     Some(RaknetClientEvent::Packet { payload, .. }) => {
                         connection.send_bytes(payload).await.map_err(|error| {
-                            io::Error::other(format!("downstream send failed: {error}"))
+                            io::Error::other(format!("Downstream send failed: {error}"))
                         })?;
                     }
                     Some(RaknetClientEvent::Disconnected { reason }) => {
-                        eprintln!("[listener_facade] upstream disconnected: {reason:?}");
+                        eprintln!("[listener_facade] Upstream disconnected: {reason:?}");
                         connection.close().await;
                         break;
                     }
                     Some(RaknetClientEvent::DecodeError { error }) => {
-                        eprintln!("[listener_facade] upstream decode error: {error}");
+                        eprintln!("[listener_facade] Upstream decode error: {error}");
                     }
                     Some(RaknetClientEvent::Connected { .. }) | Some(RaknetClientEvent::ReceiptAcked { .. }) => {}
                     None => {
@@ -148,7 +148,7 @@ async fn main() -> io::Result<()> {
 
     let metadata = listener.metadata();
     println!(
-        "listener start: listen={}, shard_count={}, mode={}",
+        "Listener start: listen={}, shard_count={}, mode={}",
         metadata.bind_addr(),
         metadata.shard_count(),
         if upstream.is_some() { "proxy" } else { "echo" }
@@ -158,7 +158,7 @@ async fn main() -> io::Result<()> {
         let connection = listener.accept().await?;
         let conn_meta = connection.metadata();
         println!(
-            "accepted: id={} remote={}",
+            "Accepted: id={} remote={}",
             conn_meta.id().as_u64(),
             conn_meta.remote_addr()
         );
@@ -166,13 +166,13 @@ async fn main() -> io::Result<()> {
         if let Some(upstream_addr) = upstream {
             tokio::spawn(async move {
                 if let Err(error) = run_proxy(connection, upstream_addr).await {
-                    eprintln!("[listener_facade] proxy session failed: {error}");
+                    eprintln!("[listener_facade] Proxy session failed: {error}");
                 }
             });
         } else {
             tokio::spawn(async move {
                 if let Err(error) = run_echo(connection).await {
-                    eprintln!("[listener_facade] echo session failed: {error}");
+                    eprintln!("[listener_facade] Echo session failed: {error}");
                 }
             });
         }

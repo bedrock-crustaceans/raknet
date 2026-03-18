@@ -18,10 +18,10 @@ use tokio::time::timeout;
 
 fn allocate_loopback_bind_addr() -> SocketAddr {
     let socket = std::net::UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
-        .expect("ephemeral loopback bind must succeed");
+        .expect("Ephemeral loopback bind must succeed");
     socket
         .local_addr()
-        .expect("ephemeral local addr must be available")
+        .expect("Ephemeral local addr must be available")
 }
 
 async fn start_server(bind_addr: SocketAddr) -> io::Result<RaknetServer> {
@@ -49,15 +49,15 @@ async fn wait_for_client_connected(client: &mut RaknetClient) {
     while Instant::now() < deadline {
         let event = timeout(Duration::from_secs(3), client.next_event())
             .await
-            .expect("timed out waiting for client event")
-            .expect("client event stream unexpectedly ended");
+            .expect("Timed out waiting for client event")
+            .expect("Client event stream unexpectedly ended");
 
         if matches!(event, RaknetClientEvent::Connected { .. }) {
             return;
         }
     }
 
-    panic!("timed out waiting for client connected event");
+    panic!("Timed out waiting for client connected event");
 }
 
 async fn wait_for_proxy_session_started<P>(
@@ -70,8 +70,8 @@ where
     while Instant::now() < deadline {
         let event = timeout(Duration::from_secs(1), proxy.next_event())
             .await
-            .expect("timed out waiting for proxy session started event")
-            .expect("proxy event stream unexpectedly ended");
+            .expect("Timed out waiting for proxy session started event")
+            .expect("Proxy event stream unexpectedly ended");
 
         if let RaknetRelayProxyEvent::SessionStarted {
             peer_id,
@@ -83,7 +83,7 @@ where
         }
     }
 
-    panic!("timed out waiting for proxy SessionStarted event");
+    panic!("Timed out waiting for proxy SessionStarted event");
 }
 
 async fn collect_session_closed_reasons<P>(
@@ -136,7 +136,7 @@ where
         }
     }
 
-    panic!("timed out waiting for upstream packet");
+    panic!("Timed out waiting for upstream packet");
 }
 
 async fn wait_for_upstream_packet_with_metadata<P>(
@@ -169,7 +169,7 @@ where
         }
     }
 
-    panic!("timed out waiting for upstream packet");
+    panic!("Timed out waiting for upstream packet");
 }
 
 async fn wait_for_client_payload_through_proxy<P>(
@@ -191,7 +191,7 @@ where
             match client_event {
                 RaknetClientEvent::Packet { payload, .. } => return payload,
                 RaknetClientEvent::Disconnected { reason } => {
-                    panic!("client disconnected unexpectedly while waiting for payload: {reason:?}")
+                    panic!("Client disconnected unexpectedly while waiting for payload: {reason:?}")
                 }
                 RaknetClientEvent::Connected { .. }
                 | RaknetClientEvent::ReceiptAcked { .. }
@@ -200,7 +200,7 @@ where
         }
     }
 
-    panic!("timed out waiting for client payload through proxy");
+    panic!("Timed out waiting for client payload through proxy");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -316,7 +316,7 @@ async fn proxy_preserves_packet_reliability_and_channel_across_both_directions()
                 }
                 RaknetClientEvent::Disconnected { reason } => {
                     panic!(
-                        "client disconnected unexpectedly while waiting for metadata packet: {reason:?}"
+                        "Client disconnected unexpectedly while waiting for metadata packet: {reason:?}"
                     )
                 }
                 RaknetClientEvent::Connected { .. }
@@ -326,7 +326,7 @@ async fn proxy_preserves_packet_reliability_and_channel_across_both_directions()
         }
     }
 
-    panic!("timed out waiting for client metadata packet")
+    panic!("Timed out waiting for client metadata packet")
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -394,11 +394,11 @@ async fn proxy_policy_can_drop_downstream_payloads_before_upstream() -> io::Resu
 
     assert!(
         !saw_upstream_packet,
-        "upstream must not receive dropped payload"
+        "Upstream must not receive dropped payload"
     );
     assert!(
         saw_drop_event,
-        "proxy should emit dropped event for policy drop"
+        "Proxy should emit dropped event for policy drop"
     );
 
     client.disconnect(None).await?;
@@ -487,12 +487,12 @@ async fn proxy_policy_disconnect_closes_downstream_session() -> io::Result<()> {
 
     assert!(
         saw_policy_disconnect,
-        "proxy should close session with policy disconnect reason"
+        "Proxy should close session with policy disconnect reason"
     );
     assert_eq!(
         proxy.session_count(),
         0,
-        "proxy session must be torn down after policy disconnect"
+        "Proxy session must be torn down after policy disconnect"
     );
 
     if !saw_client_disconnect {
@@ -504,7 +504,7 @@ async fn proxy_policy_disconnect_closes_downstream_session() -> io::Result<()> {
             .await;
     assert!(
         close_reasons.is_empty(),
-        "session should not emit duplicate close after initial policy close"
+        "Session should not emit duplicate close after initial policy close"
     );
 
     proxy.shutdown().await?;
@@ -549,12 +549,12 @@ async fn proxy_simultaneous_upstream_and_downstream_disconnect_emits_single_clos
     assert_eq!(
         close_reasons.len(),
         1,
-        "disconnect race must emit exactly one SessionClosed for the same session"
+        "Disconnect race must emit exactly one SessionClosed for the same session"
     );
     assert_eq!(
         proxy.session_count(),
         0,
-        "proxy must not leak session after disconnect race"
+        "Proxy must not leak session after disconnect race"
     );
 
     proxy.shutdown().await?;
@@ -586,7 +586,7 @@ async fn proxy_shutdown_terminates_active_session_without_hanging() -> io::Resul
     assert_eq!(
         proxy.session_count(),
         1,
-        "proxy should hold one active session"
+        "Proxy should hold one active session"
     );
 
     timeout(Duration::from_secs(2), proxy.shutdown())
@@ -643,15 +643,15 @@ async fn proxy_budget_overflow_drop_newest_drops_packet_without_closing_session(
         }
     }
 
-    assert!(saw_budget_drop, "expected budget-based drop event");
+    assert!(saw_budget_drop, "Expected budget-based drop event");
     assert!(
         !saw_upstream_packet,
-        "budget dropped packet must not reach upstream"
+        "Budget dropped packet must not reach upstream"
     );
     assert_eq!(
         proxy.session_count(),
         1,
-        "drop policy should keep session alive"
+        "Drop policy should keep session alive"
     );
 
     let _ = client.disconnect(None).await;
@@ -702,11 +702,11 @@ async fn proxy_budget_overflow_disconnect_closes_session() -> io::Result<()> {
         }
     }
 
-    assert!(saw_budget_close, "expected budget-based session close");
+    assert!(saw_budget_close, "Expected budget-based session close");
     assert_eq!(
         proxy.session_count(),
         0,
-        "disconnect budget policy must close session"
+        "Disconnect budget policy must close session"
     );
 
     let _ = client.disconnect(None).await;

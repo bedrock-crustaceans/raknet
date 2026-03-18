@@ -20,29 +20,22 @@ use crate::transport::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-/// Stable server-side identifier assigned to a connected peer.
 pub struct PeerId(u64);
 
 impl PeerId {
-    /// Creates a [`PeerId`] from a raw `u64`.
     pub const fn from_u64(value: u64) -> Self {
         Self(value)
     }
 
-    /// Returns the underlying raw identifier.
     pub const fn as_u64(self) -> u64 {
         self.0
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Send policy used when dispatching payloads to a peer.
 pub struct SendOptions {
-    /// RakNet reliability class for the outgoing frame.
     pub reliability: Reliability,
-    /// Ordering channel (used by ordered/sequenced reliabilities).
     pub channel: u8,
-    /// Priority used by the session scheduler.
     pub priority: RakPriority,
 }
 
@@ -57,7 +50,6 @@ impl Default for SendOptions {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Reason reported when a peer session is closed.
 pub enum PeerDisconnectReason {
     Requested,
     RemoteDisconnectionNotification { reason_code: Option<u8> },
@@ -66,7 +58,6 @@ pub enum PeerDisconnectReason {
 }
 
 #[derive(Debug)]
-/// Event stream produced by [`RaknetServer::next_event`].
 pub enum RaknetServerEvent {
     PeerConnected {
         peer_id: PeerId,
@@ -126,7 +117,6 @@ pub enum RaknetServerEvent {
 }
 
 impl RaknetServerEvent {
-    /// Returns metrics payload for [`RaknetServerEvent::Metrics`], otherwise `None`.
     pub fn metrics_snapshot(&self) -> Option<(usize, &TransportMetricsSnapshot, u64)> {
         match self {
             Self::Metrics {
@@ -140,7 +130,6 @@ impl RaknetServerEvent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Hook payload for a newly connected peer.
 pub struct ConnectEvent {
     pub peer_id: PeerId,
     pub addr: SocketAddr,
@@ -149,7 +138,6 @@ pub struct ConnectEvent {
 }
 
 #[derive(Debug, Clone)]
-/// Hook payload for an inbound application packet.
 pub struct PacketEvent {
     pub peer_id: PeerId,
     pub addr: SocketAddr,
@@ -162,14 +150,12 @@ pub struct PacketEvent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Hook payload for a disconnected peer.
 pub struct DisconnectEvent {
     pub peer_id: PeerId,
     pub addr: SocketAddr,
     pub reason: PeerDisconnectReason,
 }
 
-/// Async return type used by server hook callbacks.
 pub type ServerHookFuture<'a> = Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>;
 
 type ConnectHandler =
@@ -179,9 +165,6 @@ type PacketHandler =
 type DisconnectHandler =
     Box<dyn for<'a> FnMut(&'a mut RaknetServer, DisconnectEvent) -> ServerHookFuture<'a> + Send>;
 
-/// Closure-based facade over [`RaknetServerEvent`] stream.
-///
-/// Useful when you want to wire small handlers without defining custom handler traits.
 pub struct ServerFacade<'a> {
     server: &'a mut RaknetServer,
     on_connect: Option<ConnectHandler>,
@@ -190,7 +173,6 @@ pub struct ServerFacade<'a> {
 }
 
 impl<'a> ServerFacade<'a> {
-    /// Creates a new facade around a mutable server reference.
     pub fn new(server: &'a mut RaknetServer) -> Self {
         Self {
             server,
@@ -200,7 +182,6 @@ impl<'a> ServerFacade<'a> {
         }
     }
 
-    /// Registers `on_connect` callback.
     pub fn on_connect<F>(mut self, handler: F) -> Self
     where
         F: for<'b> FnMut(&'b mut RaknetServer, ConnectEvent) -> ServerHookFuture<'b>
@@ -211,7 +192,6 @@ impl<'a> ServerFacade<'a> {
         self
     }
 
-    /// Registers `on_packet` callback.
     pub fn on_packet<F>(mut self, handler: F) -> Self
     where
         F: for<'b> FnMut(&'b mut RaknetServer, PacketEvent) -> ServerHookFuture<'b>
@@ -222,7 +202,6 @@ impl<'a> ServerFacade<'a> {
         self
     }
 
-    /// Registers `on_disconnect` callback.
     pub fn on_disconnect<F>(mut self, handler: F) -> Self
     where
         F: for<'b> FnMut(&'b mut RaknetServer, DisconnectEvent) -> ServerHookFuture<'b>
@@ -233,9 +212,6 @@ impl<'a> ServerFacade<'a> {
         self
     }
 
-    /// Polls one server event and dispatches to registered callbacks.
-    ///
-    /// Returns `Ok(false)` when the server event stream is closed.
     pub async fn next(&mut self) -> io::Result<bool> {
         let Some(event) = self.server.next_event().await else {
             return Ok(false);
@@ -244,18 +220,15 @@ impl<'a> ServerFacade<'a> {
         Ok(true)
     }
 
-    /// Runs the dispatch loop until stream closure or callback error.
     pub async fn run(&mut self) -> io::Result<()> {
         while self.next().await? {}
         Ok(())
     }
 
-    /// Returns immutable access to wrapped server.
     pub fn server(&self) -> &RaknetServer {
         self.server
     }
 
-    /// Returns mutable access to wrapped server.
     pub fn server_mut(&mut self) -> &mut RaknetServer {
         self.server
     }
@@ -340,48 +313,43 @@ impl<'a> ServerFacade<'a> {
     }
 }
 
-/// Event-driven callback surface that mirrors RakLibInterface-style hooks.
-///
-/// This trait is intentionally event-driven and is fed from `RaknetServerEvent`.
-/// All methods are optional and default to no-op.
 pub trait EventFacadeHandler {
-    fn on_connect<'a>(
-        &'a mut self,
+    fn on_connect(
+        &mut self,
         _session_id: u64,
         _addr: IpAddr,
         _port: u16,
         _client_guid: u64,
-    ) -> ServerHookFuture<'a> {
+    ) -> ServerHookFuture {
         Box::pin(async { Ok(()) })
     }
 
-    fn on_disconnect<'a>(
-        &'a mut self,
+    fn on_disconnect(
+        &mut self,
         _session_id: u64,
         _reason: PeerDisconnectReason,
-    ) -> ServerHookFuture<'a> {
+    ) -> ServerHookFuture {
         Box::pin(async { Ok(()) })
     }
 
-    fn on_packet<'a>(&'a mut self, _session_id: u64, _payload: Bytes) -> ServerHookFuture<'a> {
+    fn on_packet(&mut self, _session_id: u64, _payload: Bytes) -> ServerHookFuture {
         Box::pin(async { Ok(()) })
     }
 
-    fn on_ack<'a>(&'a mut self, _session_id: u64, _receipt_id: u64) -> ServerHookFuture<'a> {
+    fn on_ack(&mut self, _session_id: u64, _receipt_id: u64) -> ServerHookFuture {
         Box::pin(async { Ok(()) })
     }
 
-    fn on_metrics<'a>(
-        &'a mut self,
+    fn on_metrics(
+        &mut self,
         _shard_id: usize,
         _snapshot: TransportMetricsSnapshot,
         _dropped_non_critical_events: u64,
-    ) -> ServerHookFuture<'a> {
+    ) -> ServerHookFuture {
         Box::pin(async { Ok(()) })
     }
 }
 
-/// Dispatches a single [`RaknetServerEvent`] into an [`EventFacadeHandler`].
 pub async fn dispatch_event_facade<H: EventFacadeHandler>(
     handler: &mut H,
     event: RaknetServerEvent,
@@ -435,21 +403,16 @@ pub async fn dispatch_event_facade<H: EventFacadeHandler>(
     Ok(())
 }
 
-/// Trait-based facade runner over server events.
 pub struct EventFacade<'a, H: EventFacadeHandler> {
     server: &'a mut RaknetServer,
     handler: &'a mut H,
 }
 
 impl<'a, H: EventFacadeHandler> EventFacade<'a, H> {
-    /// Creates a new event facade binding a server and handler.
     pub fn new(server: &'a mut RaknetServer, handler: &'a mut H) -> Self {
         Self { server, handler }
     }
 
-    /// Polls one event and dispatches it into handler callbacks.
-    ///
-    /// Returns `Ok(false)` when the server event stream is closed.
     pub async fn next(&mut self) -> io::Result<bool> {
         let Some(event) = self.server.next_event().await else {
             return Ok(false);
@@ -458,28 +421,23 @@ impl<'a, H: EventFacadeHandler> EventFacade<'a, H> {
         Ok(true)
     }
 
-    /// Runs the facade loop until closure or callback error.
     pub async fn run(&mut self) -> io::Result<()> {
         while self.next().await? {}
         Ok(())
     }
 
-    /// Returns immutable access to wrapped server.
     pub fn server(&self) -> &RaknetServer {
         self.server
     }
 
-    /// Returns mutable access to wrapped server.
     pub fn server_mut(&mut self) -> &mut RaknetServer {
         self.server
     }
 
-    /// Returns immutable access to wrapped handler.
     pub fn handler(&self) -> &H {
         self.handler
     }
 
-    /// Returns mutable access to wrapped handler.
     pub fn handler_mut(&mut self) -> &mut H {
         self.handler
     }
@@ -492,7 +450,6 @@ impl<'a, H: EventFacadeHandler> EventFacade<'a, H> {
 pub type SessionId = u32;
 
 #[derive(Debug)]
-/// Bidirectional mapping between [`PeerId`] and stable session ids.
 pub struct SessionIdAdapter {
     peer_to_session: FastMap<PeerId, SessionId>,
     session_to_peer: FastMap<SessionId, PeerId>,
@@ -506,7 +463,6 @@ impl Default for SessionIdAdapter {
 }
 
 impl SessionIdAdapter {
-    /// Creates a new empty adapter.
     pub fn new() -> Self {
         Self {
             peer_to_session: fast_map(),
@@ -515,35 +471,27 @@ impl SessionIdAdapter {
         }
     }
 
-    /// Returns number of currently mapped sessions.
     pub fn len(&self) -> usize {
         self.peer_to_session.len()
     }
 
-    /// Returns `true` if no session is currently mapped.
     pub fn is_empty(&self) -> bool {
         self.peer_to_session.is_empty()
     }
 
-    /// Resolves a [`PeerId`] to session id.
     pub fn session_id_for_peer(&self, peer_id: PeerId) -> Option<SessionId> {
         self.peer_to_session.get(&peer_id).map(|entry| *entry)
     }
 
-    /// Resolves a session id to [`PeerId`].
     pub fn peer_id_for_session(&self, session_id: SessionId) -> Option<PeerId> {
         self.session_to_peer.get(&session_id).map(|entry| *entry)
     }
 
-    /// Resolves an `i32` session id to [`PeerId`].
     pub fn peer_id_for_session_i32(&self, session_id: i32) -> Option<PeerId> {
         let session_id = Self::session_id_from_i32(session_id)?;
         self.peer_id_for_session(session_id)
     }
 
-    /// Registers peer and returns mapped session id.
-    ///
-    /// If peer is already registered, existing id is returned.
     pub fn register_peer(&mut self, peer_id: PeerId) -> io::Result<SessionId> {
         if let Some(existing) = self.session_id_for_peer(peer_id) {
             return Ok(existing);
@@ -555,26 +503,22 @@ impl SessionIdAdapter {
         Ok(session_id)
     }
 
-    /// Unregisters peer and returns removed session id, if present.
     pub fn unregister_peer(&mut self, peer_id: PeerId) -> Option<SessionId> {
         let (_, session_id) = self.peer_to_session.remove(&peer_id)?;
         self.session_to_peer.remove(&session_id);
         Some(session_id)
     }
 
-    /// Clears all mappings and resets id allocator.
     pub fn clear(&mut self) {
         self.peer_to_session.clear();
         self.session_to_peer.clear();
         self.next_session_id = 1;
     }
 
-    /// Converts internal session id to `i32` when representable.
     pub fn session_id_to_i32(session_id: SessionId) -> Option<i32> {
         i32::try_from(session_id).ok()
     }
 
-    /// Converts `i32` session id into internal type.
     pub fn session_id_from_i32(session_id: i32) -> Option<SessionId> {
         u32::try_from(session_id).ok()
     }
@@ -601,55 +545,51 @@ impl SessionIdAdapter {
             }
         }
 
-        Err(io::Error::other("session id space exhausted"))
+        Err(io::Error::other("Session id space exhausted"))
     }
 }
 
-/// Session-id based callback surface.
-///
-/// Use this when your application prefers integer session ids over [`PeerId`].
 pub trait SessionFacadeHandler {
-    fn on_connect<'a>(
-        &'a mut self,
+    fn on_connect(
+        &mut self,
         _session_id: SessionId,
         _addr: IpAddr,
         _port: u16,
         _client_guid: u64,
-    ) -> ServerHookFuture<'a> {
+    ) -> ServerHookFuture {
         Box::pin(async { Ok(()) })
     }
 
-    fn on_disconnect<'a>(
-        &'a mut self,
+    fn on_disconnect(
+        &mut self,
         _session_id: SessionId,
         _reason: PeerDisconnectReason,
-    ) -> ServerHookFuture<'a> {
+    ) -> ServerHookFuture {
         Box::pin(async { Ok(()) })
     }
 
-    fn on_packet<'a>(
-        &'a mut self,
+    fn on_packet(
+        &mut self,
         _session_id: SessionId,
         _payload: Bytes,
-    ) -> ServerHookFuture<'a> {
+    ) -> ServerHookFuture {
         Box::pin(async { Ok(()) })
     }
 
-    fn on_ack<'a>(&'a mut self, _session_id: SessionId, _receipt_id: u64) -> ServerHookFuture<'a> {
+    fn on_ack(&mut self, _session_id: SessionId, _receipt_id: u64) -> ServerHookFuture {
         Box::pin(async { Ok(()) })
     }
 
-    fn on_metrics<'a>(
-        &'a mut self,
+    fn on_metrics(
+        &'_ mut self,
         _shard_id: usize,
         _snapshot: TransportMetricsSnapshot,
         _dropped_non_critical_events: u64,
-    ) -> ServerHookFuture<'a> {
+    ) -> ServerHookFuture<'_> {
         Box::pin(async { Ok(()) })
     }
 }
 
-/// Dispatches a single event into a [`SessionFacadeHandler`].
 pub async fn dispatch_session_facade<H: SessionFacadeHandler>(
     adapter: &mut SessionIdAdapter,
     handler: &mut H,
@@ -677,7 +617,7 @@ pub async fn dispatch_session_facade<H: SessionFacadeHandler>(
                 debug!(
                     peer_id = peer_id.as_u64(),
                     ?reason,
-                    "ignoring disconnect for unknown session id mapping"
+                    "Ignoring disconnect for unknown session id mapping"
                 );
             }
         }
@@ -689,7 +629,7 @@ pub async fn dispatch_session_facade<H: SessionFacadeHandler>(
             } else {
                 debug!(
                     peer_id = peer_id.as_u64(),
-                    "dropping packet callback because session id mapping is missing"
+                    "Dropping packet callback because session id mapping is missing"
                 );
             }
         }
@@ -703,7 +643,7 @@ pub async fn dispatch_session_facade<H: SessionFacadeHandler>(
             } else {
                 debug!(
                     peer_id = peer_id.as_u64(),
-                    receipt_id, "dropping ack callback because session id mapping is missing"
+                    receipt_id, "Dropping ack callback because session id mapping is missing"
                 );
             }
         }
@@ -728,7 +668,6 @@ pub async fn dispatch_session_facade<H: SessionFacadeHandler>(
     Ok(())
 }
 
-/// Session-id based facade over server events.
 pub struct SessionFacade<'a, H: SessionFacadeHandler> {
     server: &'a mut RaknetServer,
     handler: &'a mut H,
@@ -736,7 +675,6 @@ pub struct SessionFacade<'a, H: SessionFacadeHandler> {
 }
 
 impl<'a, H: SessionFacadeHandler> SessionFacade<'a, H> {
-    /// Creates a new session facade with an empty [`SessionIdAdapter`].
     pub fn new(server: &'a mut RaknetServer, handler: &'a mut H) -> Self {
         Self {
             server,
@@ -745,7 +683,6 @@ impl<'a, H: SessionFacadeHandler> SessionFacade<'a, H> {
         }
     }
 
-    /// Creates a session facade with a caller-provided adapter.
     pub fn with_adapter(
         server: &'a mut RaknetServer,
         handler: &'a mut H,
@@ -758,9 +695,6 @@ impl<'a, H: SessionFacadeHandler> SessionFacade<'a, H> {
         }
     }
 
-    /// Polls one event and dispatches it to the session handler.
-    ///
-    /// Returns `Ok(false)` when the server event stream is closed.
     pub async fn next(&mut self) -> io::Result<bool> {
         let Some(event) = self.server.next_event().await else {
             return Ok(false);
@@ -769,58 +703,47 @@ impl<'a, H: SessionFacadeHandler> SessionFacade<'a, H> {
         Ok(true)
     }
 
-    /// Runs facade loop until stream closure or callback error.
     pub async fn run(&mut self) -> io::Result<()> {
         while self.next().await? {}
         Ok(())
     }
 
-    /// Returns immutable access to wrapped server.
     pub fn server(&self) -> &RaknetServer {
         self.server
     }
 
-    /// Returns mutable access to wrapped server.
     pub fn server_mut(&mut self) -> &mut RaknetServer {
         self.server
     }
 
-    /// Returns immutable access to wrapped handler.
     pub fn handler(&self) -> &H {
         self.handler
     }
 
-    /// Returns mutable access to wrapped handler.
     pub fn handler_mut(&mut self) -> &mut H {
         self.handler
     }
 
-    /// Returns immutable access to the session-id adapter.
     pub fn adapter(&self) -> &SessionIdAdapter {
         &self.adapter
     }
 
-    /// Returns mutable access to the session-id adapter.
     pub fn adapter_mut(&mut self) -> &mut SessionIdAdapter {
         &mut self.adapter
     }
 
-    /// Resolves [`PeerId`] to session id.
     pub fn session_id_for_peer(&self, peer_id: PeerId) -> Option<SessionId> {
         self.adapter.session_id_for_peer(peer_id)
     }
 
-    /// Resolves session id to [`PeerId`].
     pub fn peer_id_for_session(&self, session_id: SessionId) -> Option<PeerId> {
         self.adapter.peer_id_for_session(session_id)
     }
 
-    /// Resolves i32 session id to [`PeerId`].
     pub fn peer_id_for_session_i32(&self, session_id: i32) -> Option<PeerId> {
         self.adapter.peer_id_for_session_i32(session_id)
     }
 
-    /// Sends payload to a session with default send options.
     pub async fn send(
         &mut self,
         session_id: SessionId,
@@ -830,7 +753,6 @@ impl<'a, H: SessionFacadeHandler> SessionFacade<'a, H> {
         self.server.send(peer_id, payload).await
     }
 
-    /// Sends payload to a session with explicit send options.
     pub async fn send_with_options(
         &mut self,
         session_id: SessionId,
@@ -843,7 +765,6 @@ impl<'a, H: SessionFacadeHandler> SessionFacade<'a, H> {
             .await
     }
 
-    /// Sends payload to a session and tracks a receipt id.
     pub async fn send_with_receipt(
         &mut self,
         session_id: SessionId,
@@ -856,7 +777,6 @@ impl<'a, H: SessionFacadeHandler> SessionFacade<'a, H> {
             .await
     }
 
-    /// Disconnects a session.
     pub async fn disconnect(&mut self, session_id: SessionId) -> io::Result<()> {
         let peer_id = self.resolve_peer_id(session_id)?;
         self.server.disconnect(peer_id).await
@@ -877,48 +797,40 @@ impl<'a, H: SessionFacadeHandler> SessionFacade<'a, H> {
 }
 
 #[derive(Debug, Clone, Default)]
-/// Builder for [`RaknetServer`].
 pub struct RaknetServerBuilder {
     transport_config: TransportConfig,
     runtime_config: ShardedRuntimeConfig,
 }
 
 impl RaknetServerBuilder {
-    /// Replaces transport configuration.
     pub fn transport_config(mut self, config: TransportConfig) -> Self {
         self.transport_config = config;
         self
     }
 
-    /// Replaces runtime/shard configuration.
     pub fn runtime_config(mut self, config: ShardedRuntimeConfig) -> Self {
         self.runtime_config = config;
         self
     }
 
-    /// Sets bind address in transport configuration.
     pub fn bind_addr(mut self, bind_addr: SocketAddr) -> Self {
         self.transport_config.bind_addr = bind_addr;
         self
     }
 
-    /// Sets shard count (minimum `1`).
     pub fn shard_count(mut self, shard_count: usize) -> Self {
         self.runtime_config.shard_count = shard_count.max(1);
         self
     }
 
-    /// Returns mutable transport config for in-place adjustments.
     pub fn transport_config_mut(&mut self) -> &mut TransportConfig {
         &mut self.transport_config
     }
 
-    /// Returns mutable runtime config for in-place adjustments.
     pub fn runtime_config_mut(&mut self) -> &mut ShardedRuntimeConfig {
         &mut self.runtime_config
     }
 
-    /// Validates configs and starts the server.
     pub async fn start(self) -> io::Result<RaknetServer> {
         self.transport_config
             .validate()
@@ -945,22 +857,18 @@ pub struct RaknetServer {
 }
 
 impl RaknetServer {
-    /// Creates a default builder.
     pub fn builder() -> RaknetServerBuilder {
         RaknetServerBuilder::default()
     }
 
-    /// Starts server with default configs and provided bind address.
     pub async fn bind(bind_addr: SocketAddr) -> io::Result<Self> {
         Self::builder().bind_addr(bind_addr).start().await
     }
 
-    /// Creates closure-based facade over server event stream.
     pub fn facade(&mut self) -> ServerFacade<'_> {
         ServerFacade::new(self)
     }
 
-    /// Creates trait-based event facade over server event stream.
     pub fn event_facade<'a, H: EventFacadeHandler>(
         &'a mut self,
         handler: &'a mut H,
@@ -968,7 +876,6 @@ impl RaknetServer {
         EventFacade::new(self, handler)
     }
 
-    /// Creates session-id based facade over server event stream.
     pub fn session_facade<'a, H: SessionFacadeHandler>(
         &'a mut self,
         handler: &'a mut H,
@@ -976,7 +883,6 @@ impl RaknetServer {
         SessionFacade::new(self, handler)
     }
 
-    /// Starts server from explicit transport and runtime configurations.
     pub async fn start_with_configs(
         transport_config: TransportConfig,
         runtime_config: ShardedRuntimeConfig,
@@ -995,12 +901,10 @@ impl RaknetServer {
         })
     }
 
-    /// Returns peer socket address for a peer id, if present.
     pub fn peer_addr(&self, peer_id: PeerId) -> Option<SocketAddr> {
         self.addrs_by_peer.get(&peer_id).map(|addr| *addr)
     }
 
-    /// Returns shard id owning a peer, if present.
     pub fn peer_shard(&self, peer_id: PeerId) -> Option<usize> {
         let addr = self.addrs_by_peer.get(&peer_id).map(|addr| *addr)?;
         self.peers_by_addr
@@ -1008,18 +912,15 @@ impl RaknetServer {
             .map(|binding| binding.shard_id)
     }
 
-    /// Resolves peer id by remote address, if known.
     pub fn peer_id_for_addr(&self, addr: SocketAddr) -> Option<PeerId> {
         self.peers_by_addr.get(&addr).map(|binding| binding.peer_id)
     }
 
-    /// Sends payload with default send options.
     pub async fn send(&self, peer_id: PeerId, payload: impl Into<Bytes>) -> io::Result<()> {
         self.send_with_options(peer_id, payload, SendOptions::default())
             .await
     }
 
-    /// Sends payload with explicit send options.
     pub async fn send_with_options(
         &self,
         peer_id: PeerId,
@@ -1042,7 +943,6 @@ impl RaknetServer {
             .await
     }
 
-    /// Sends payload and tracks a receipt id.
     pub async fn send_with_receipt(
         &self,
         peer_id: PeerId,
@@ -1053,7 +953,6 @@ impl RaknetServer {
             .await
     }
 
-    /// Sends payload with explicit send options and receipt id.
     pub async fn send_with_options_and_receipt(
         &self,
         peer_id: PeerId,
@@ -1078,14 +977,13 @@ impl RaknetServer {
             .await
     }
 
-    /// Requests disconnection and emits a local disconnect event.
     pub async fn disconnect(&mut self, peer_id: PeerId) -> io::Result<()> {
         let (addr, shard_id) = self.resolve_peer_route(peer_id)?;
         info!(
             peer_id = peer_id.as_u64(),
             %addr,
             shard_id,
-            "server disconnect requested"
+            "Server disconnect requested"
         );
 
         self.runtime
@@ -1101,9 +999,6 @@ impl RaknetServer {
         Ok(())
     }
 
-    /// Polls next server event.
-    ///
-    /// Returns `None` when runtime event channel is closed.
     pub async fn next_event(&mut self) -> Option<RaknetServerEvent> {
         if let Some(event) = self.pending_events.pop_front() {
             return Some(event);
@@ -1118,7 +1013,6 @@ impl RaknetServer {
         }
     }
 
-    /// Gracefully stops all workers and closes sockets.
     pub async fn shutdown(self) -> io::Result<()> {
         self.runtime.shutdown().await
     }
@@ -1142,7 +1036,7 @@ impl RaknetServer {
                             peer_id = peer_id.as_u64(),
                             %addr,
                             ?reason,
-                            "peer disconnected"
+                            "Peer disconnected"
                         );
                         self.pending_events
                             .push_back(RaknetServerEvent::PeerDisconnected {
@@ -1154,7 +1048,7 @@ impl RaknetServer {
                         debug!(
                             %addr,
                             ?reason,
-                            "received peer disconnect for unknown address"
+                            "Received peer disconnect for unknown address"
                         );
                     }
                 }
@@ -1172,7 +1066,7 @@ impl RaknetServer {
                         debug!(
                             %addr,
                             shard_id,
-                            "ignoring pre-connect transport event without frames/receipts"
+                            "Ignoring pre-connect transport event without frames/receipts"
                         );
                     } else {
                         let (peer_id, is_new) = self.ensure_peer(addr, shard_id);
@@ -1183,7 +1077,7 @@ impl RaknetServer {
                                 %addr,
                                 client_guid,
                                 shard_id,
-                                "peer connected"
+                                "Peer connected"
                             );
                             self.pending_events
                                 .push_back(RaknetServerEvent::PeerConnected {
@@ -1218,23 +1112,23 @@ impl RaknetServer {
                     }
                 }
                 TransportEvent::RateLimited { addr } => {
-                    warn!(%addr, "peer rate-limited");
+                    warn!(%addr, "Peer rate-limited");
                     self.pending_events
                         .push_back(RaknetServerEvent::PeerRateLimited { addr });
                 }
                 TransportEvent::SessionLimitReached { addr } => {
-                    warn!(%addr, "session limit reached");
+                    warn!(%addr, "Session limit reached");
                     self.pending_events
                         .push_back(RaknetServerEvent::SessionLimitReached { addr });
                 }
                 TransportEvent::ConnectedDatagramDroppedNoSession { .. } => {}
                 TransportEvent::ProxyDropped { addr } => {
-                    debug!(%addr, "proxy router dropped packet");
+                    debug!(%addr, "Proxy router dropped packet");
                     self.pending_events
                         .push_back(RaknetServerEvent::ProxyDropped { addr });
                 }
                 TransportEvent::DecodeError { addr, error } => {
-                    warn!(%addr, %error, "transport decode error");
+                    warn!(%addr, %error, "Transport decode error");
                     self.pending_events
                         .push_back(RaknetServerEvent::DecodeError {
                             addr,
@@ -1255,7 +1149,7 @@ impl RaknetServer {
                     debug!(
                         shard_id,
                         dropped_non_critical_events,
-                        "non-critical runtime events were dropped before metrics emit"
+                        "Non-critical runtime events were dropped before metrics emit"
                     );
                 }
                 self.pending_events.push_back(RaknetServerEvent::Metrics {
@@ -1265,12 +1159,12 @@ impl RaknetServer {
                 });
             }
             ShardedRuntimeEvent::WorkerError { shard_id, message } => {
-                warn!(shard_id, %message, "runtime worker error");
+                warn!(shard_id, %message, "Runtime worker error");
                 self.pending_events
                     .push_back(RaknetServerEvent::WorkerError { shard_id, message });
             }
             ShardedRuntimeEvent::WorkerStopped { shard_id } => {
-                warn!(shard_id, "runtime worker stopped");
+                warn!(shard_id, "Runtime worker stopped");
                 let mut disconnected = Vec::new();
                 for peer in self.peers_by_addr.iter() {
                     let addr = *peer.key();
@@ -1285,7 +1179,7 @@ impl RaknetServer {
                         peer_id = peer_id.as_u64(),
                         %addr,
                         shard_id,
-                        "peer disconnected because worker stopped"
+                        "Peer disconnected because worker stopped"
                     );
                     self.pending_events
                         .push_back(RaknetServerEvent::PeerDisconnected {
@@ -1403,46 +1297,46 @@ mod tests {
     }
 
     impl EventFacadeHandler for CountingEventHandler {
-        fn on_connect<'a>(
-            &'a mut self,
+        fn on_connect(
+            &mut self,
             session_id: u64,
             addr: IpAddr,
             port: u16,
             client_guid: u64,
-        ) -> ServerHookFuture<'a> {
+        ) -> ServerHookFuture {
             self.connect_calls = self.connect_calls.saturating_add(1);
             self.last_connect = Some((session_id, addr, port, client_guid));
             Box::pin(async { Ok(()) })
         }
 
-        fn on_disconnect<'a>(
-            &'a mut self,
+        fn on_disconnect(
+            &mut self,
             session_id: u64,
             reason: PeerDisconnectReason,
-        ) -> ServerHookFuture<'a> {
+        ) -> ServerHookFuture {
             self.disconnect_calls = self.disconnect_calls.saturating_add(1);
             self.last_disconnect = Some((session_id, reason));
             Box::pin(async { Ok(()) })
         }
 
-        fn on_packet<'a>(&'a mut self, session_id: u64, payload: Bytes) -> ServerHookFuture<'a> {
+        fn on_packet(&mut self, session_id: u64, payload: Bytes) -> ServerHookFuture {
             self.packet_calls = self.packet_calls.saturating_add(1);
             self.last_packet = Some((session_id, payload));
             Box::pin(async { Ok(()) })
         }
 
-        fn on_ack<'a>(&'a mut self, session_id: u64, receipt_id: u64) -> ServerHookFuture<'a> {
+        fn on_ack(&mut self, session_id: u64, receipt_id: u64) -> ServerHookFuture {
             self.ack_calls = self.ack_calls.saturating_add(1);
             self.last_ack = Some((session_id, receipt_id));
             Box::pin(async { Ok(()) })
         }
 
-        fn on_metrics<'a>(
-            &'a mut self,
+        fn on_metrics(
+            &mut self,
             shard_id: usize,
             snapshot: TransportMetricsSnapshot,
             dropped_non_critical_events: u64,
-        ) -> ServerHookFuture<'a> {
+        ) -> ServerHookFuture {
             self.metrics_calls = self.metrics_calls.saturating_add(1);
             self.last_metrics = Some((shard_id, snapshot, dropped_non_critical_events));
             Box::pin(async { Ok(()) })
@@ -1536,7 +1430,7 @@ mod tests {
         assert_eq!(handler.last_ack, Some((77, 9001)));
         let (metrics_shard, metrics_snapshot, metrics_dropped) = handler
             .last_metrics
-            .expect("metrics callback should store last snapshot");
+            .expect("Metrics callback should store last snapshot");
         assert_eq!(metrics_shard, 2);
         assert_eq!(metrics_dropped, 5);
         assert_eq!(metrics_snapshot.packets_forwarded_total, 33);
@@ -1564,54 +1458,54 @@ mod tests {
     }
 
     impl SessionFacadeHandler for CountingSessionHandler {
-        fn on_connect<'a>(
-            &'a mut self,
+        fn on_connect(
+            &mut self,
             session_id: SessionId,
             addr: IpAddr,
             port: u16,
             client_guid: u64,
-        ) -> ServerHookFuture<'a> {
+        ) -> ServerHookFuture {
             self.connect_calls = self.connect_calls.saturating_add(1);
             self.last_connect = Some((session_id, addr, port, client_guid));
             Box::pin(async { Ok(()) })
         }
 
-        fn on_disconnect<'a>(
-            &'a mut self,
+        fn on_disconnect(
+            &mut self,
             session_id: SessionId,
             reason: PeerDisconnectReason,
-        ) -> ServerHookFuture<'a> {
+        ) -> ServerHookFuture {
             self.disconnect_calls = self.disconnect_calls.saturating_add(1);
             self.last_disconnect = Some((session_id, reason));
             Box::pin(async { Ok(()) })
         }
 
-        fn on_packet<'a>(
-            &'a mut self,
+        fn on_packet(
+            &mut self,
             session_id: SessionId,
             payload: Bytes,
-        ) -> ServerHookFuture<'a> {
+        ) -> ServerHookFuture {
             self.packet_calls = self.packet_calls.saturating_add(1);
             self.last_packet = Some((session_id, payload));
             Box::pin(async { Ok(()) })
         }
 
-        fn on_ack<'a>(
-            &'a mut self,
+        fn on_ack(
+            &mut self,
             session_id: SessionId,
             receipt_id: u64,
-        ) -> ServerHookFuture<'a> {
+        ) -> ServerHookFuture {
             self.ack_calls = self.ack_calls.saturating_add(1);
             self.last_ack = Some((session_id, receipt_id));
             Box::pin(async { Ok(()) })
         }
 
-        fn on_metrics<'a>(
-            &'a mut self,
+        fn on_metrics(
+            &mut self,
             shard_id: usize,
             snapshot: TransportMetricsSnapshot,
             dropped_non_critical_events: u64,
-        ) -> ServerHookFuture<'a> {
+        ) -> ServerHookFuture {
             self.metrics_calls = self.metrics_calls.saturating_add(1);
             self.last_metrics = Some((shard_id, snapshot, dropped_non_critical_events));
             Box::pin(async { Ok(()) })
@@ -1626,10 +1520,10 @@ mod tests {
 
         let session_a = adapter
             .register_peer(peer_a)
-            .expect("first session id allocation should succeed");
+            .expect("First session id allocation should succeed");
         let session_b = adapter
             .register_peer(peer_b)
-            .expect("second session id allocation should succeed");
+            .expect("Second session id allocation should succeed");
 
         assert_eq!(session_a, 1);
         assert_eq!(session_b, 2);
@@ -1673,7 +1567,7 @@ mod tests {
 
         let session_id = adapter
             .session_id_for_peer(peer_id)
-            .expect("session id should be registered after connect");
+            .expect("Session id should be registered after connect");
         assert_eq!(session_id, 1);
 
         dispatch_session_facade(
@@ -1745,7 +1639,7 @@ mod tests {
 
         let (metrics_shard, metrics_snapshot, metrics_dropped) = handler
             .last_metrics
-            .expect("metrics callback should store last snapshot");
+            .expect("Metrics callback should store last snapshot");
         assert_eq!(metrics_shard, 0);
         assert_eq!(metrics_dropped, 7);
         assert_eq!(metrics_snapshot.packets_forwarded_total, 5);

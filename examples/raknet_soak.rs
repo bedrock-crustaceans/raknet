@@ -97,7 +97,7 @@ fn main() {
         }
     }
 
-    println!("raknet soak summary");
+    println!("RakNet soak summary");
     println!("sessions={session_count}");
     println!("ticks={tick_count}");
     println!("payload_bytes={payload_size}");

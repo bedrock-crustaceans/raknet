@@ -9,10 +9,10 @@ use tokio::time::timeout;
 
 fn allocate_ipv4_loopback_bind_addr() -> SocketAddr {
     let socket = std::net::UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
-        .expect("ephemeral IPv4 loopback bind must succeed");
+        .expect("Ephemeral IPv4 loopback bind must succeed");
     socket
         .local_addr()
-        .expect("ephemeral IPv4 loopback local addr must be available")
+        .expect("Ephemeral IPv4 loopback local addr must be available")
 }
 
 fn allocate_ipv6_loopback_bind_addr() -> io::Result<SocketAddr> {
@@ -36,11 +36,11 @@ async fn wait_for_client_connected(client: &mut RaknetClient) -> io::Result<()> 
             .map_err(|_| {
                 io::Error::new(
                     io::ErrorKind::TimedOut,
-                    "timed out waiting for client event",
+                    "Timed out waiting for client event",
                 )
             })?
             .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::UnexpectedEof, "client event stream ended")
+                io::Error::new(io::ErrorKind::UnexpectedEof, "Client event stream ended")
             })?;
 
         match event {
@@ -48,7 +48,7 @@ async fn wait_for_client_connected(client: &mut RaknetClient) -> io::Result<()> 
             RaknetClientEvent::Disconnected { reason } => {
                 return Err(io::Error::new(
                     io::ErrorKind::ConnectionAborted,
-                    format!("client disconnected before connect completed: {reason:?}"),
+                    format!("Client disconnected before connect completed: {reason:?}"),
                 ));
             }
             RaknetClientEvent::Packet { .. }
@@ -67,18 +67,18 @@ async fn wait_for_server_peer_connected(
             .map_err(|_| {
                 io::Error::new(
                     io::ErrorKind::TimedOut,
-                    "timed out waiting for server event",
+                    "Timed out waiting for server event",
                 )
             })?
             .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::UnexpectedEof, "server event stream ended")
+                io::Error::new(io::ErrorKind::UnexpectedEof, "Server event stream ended")
             })?;
 
         match event {
             RaknetServerEvent::PeerConnected { peer_id, addr, .. } => return Ok((peer_id, addr)),
             RaknetServerEvent::WorkerError { message, .. } => {
                 return Err(io::Error::other(format!(
-                    "worker error while waiting for peer connect: {message}"
+                    "Worker error while waiting for peer connect: {message}"
                 )));
             }
             RaknetServerEvent::PeerDisconnected { .. }
@@ -121,7 +121,7 @@ async fn ipv4_only_bind_accepts_ipv4_client() -> io::Result<()> {
 #[tokio::test(flavor = "current_thread")]
 async fn ipv6_only_bind_accepts_ipv6_client() -> io::Result<()> {
     if !ipv6_loopback_available() {
-        eprintln!("ipv6 loopback unavailable; skipping ipv6-only integration test");
+        eprintln!("Ipv6 loopback unavailable; skipping ipv6-only integration test");
         return Ok(());
     }
 
@@ -143,7 +143,7 @@ async fn ipv6_only_bind_accepts_ipv6_client() -> io::Result<()> {
     let (_peer, peer_addr) = wait_for_server_peer_connected(&mut server).await?;
     assert!(
         peer_addr.is_ipv6(),
-        "ipv6-only bind should accept ipv6 client addr, got {peer_addr}"
+        "Ipv6-only bind should accept ipv6 client addr, got {peer_addr}"
     );
 
     let _ = client.disconnect(None).await;
@@ -154,7 +154,7 @@ async fn ipv6_only_bind_accepts_ipv6_client() -> io::Result<()> {
 #[tokio::test(flavor = "current_thread")]
 async fn split_dual_stack_bind_accepts_ipv4_and_ipv6_clients() -> io::Result<()> {
     if !ipv6_loopback_available() {
-        eprintln!("ipv6 loopback unavailable; skipping split dual-stack integration test");
+        eprintln!("Ipv6 loopback unavailable; skipping split dual-stack integration test");
         return Ok(());
     }
 
@@ -188,17 +188,17 @@ async fn split_dual_stack_bind_accepts_ipv4_and_ipv6_clients() -> io::Result<()>
     wait_for_client_connected(&mut client_v6).await?;
     let (_peer_v6, addr_v6) = wait_for_server_peer_connected(&mut server).await?;
 
-    assert!(
-        addr_v4 != addr_v6,
-        "split dual-stack should surface distinct remote addresses"
+    assert_ne!(
+        addr_v4, addr_v6,
+        "Split dual-stack should surface distinct remote addresses"
     );
     assert!(
         addr_v4.is_ipv4() || addr_v6.is_ipv4(),
-        "split dual-stack should accept an IPv4 client; addresses=({addr_v4}, {addr_v6})"
+        "Split dual-stack should accept an IPv4 client; addresses=({addr_v4}, {addr_v6})"
     );
     assert!(
         addr_v4.is_ipv6() || addr_v6.is_ipv6(),
-        "split dual-stack should accept an IPv6 client; addresses=({addr_v4}, {addr_v6})"
+        "Split dual-stack should accept an IPv6 client; addresses=({addr_v4}, {addr_v6})"
     );
 
     let _ = client_v4.disconnect(None).await;

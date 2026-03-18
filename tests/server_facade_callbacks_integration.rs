@@ -11,18 +11,18 @@ use tokio::time::timeout;
 
 fn allocate_loopback_bind_addr() -> SocketAddr {
     let socket = std::net::UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
-        .expect("ephemeral loopback bind must succeed");
+        .expect("Ephemeral loopback bind must succeed");
     socket
         .local_addr()
-        .expect("ephemeral local addr must be available")
+        .expect("Ephemeral local addr must be available")
 }
 
 async fn wait_for_client_connected(client: &mut RaknetClient) {
     loop {
         let event = timeout(Duration::from_secs(3), client.next_event())
             .await
-            .expect("timed out waiting for client event")
-            .expect("client event stream unexpectedly ended");
+            .expect("Timed out waiting for client event")
+            .expect("Client event stream unexpectedly ended");
 
         match event {
             RaknetClientEvent::Connected { .. } => return,
@@ -38,13 +38,13 @@ async fn wait_for_client_packet(client: &mut RaknetClient) -> Bytes {
     loop {
         let event = timeout(Duration::from_secs(3), client.next_event())
             .await
-            .expect("timed out waiting for client packet")
-            .expect("client event stream unexpectedly ended");
+            .expect("Timed out waiting for client packet")
+            .expect("Client event stream unexpectedly ended");
 
         match event {
             RaknetClientEvent::Packet { payload, .. } => return payload,
             RaknetClientEvent::Disconnected { reason } => {
-                panic!("client disconnected before packet arrived: {reason:?}")
+                panic!("Client disconnected before packet arrived: {reason:?}")
             }
             RaknetClientEvent::Connected { .. }
             | RaknetClientEvent::ReceiptAcked { .. }
@@ -64,7 +64,7 @@ async fn pump_facade_until(
             if !progressed {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
-                    "server event stream closed",
+                    "Server event stream closed",
                 ));
             }
         }
@@ -75,7 +75,7 @@ async fn pump_facade_until(
     .map_err(|_| {
         io::Error::new(
             io::ErrorKind::TimedOut,
-            "timed out waiting for facade condition",
+            "Timed out waiting for facade condition",
         )
     })?
 }

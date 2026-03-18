@@ -10,18 +10,18 @@ use tokio::time::timeout;
 
 fn allocate_loopback_bind_addr() -> SocketAddr {
     let socket = std::net::UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
-        .expect("ephemeral loopback bind must succeed");
+        .expect("Ephemeral loopback bind must succeed");
     socket
         .local_addr()
-        .expect("ephemeral local addr must be available")
+        .expect("Ephemeral local addr must be available")
 }
 
 async fn wait_for_client_connected(client: &mut RaknetClient) {
     loop {
         let event = timeout(Duration::from_secs(3), client.next_event())
             .await
-            .expect("timed out waiting for client event")
-            .expect("client event stream unexpectedly ended");
+            .expect("Timed out waiting for client event")
+            .expect("Client event stream unexpectedly ended");
 
         match event {
             RaknetClientEvent::Connected { .. } => return,
@@ -37,13 +37,13 @@ async fn wait_for_client_packet(client: &mut RaknetClient) -> Bytes {
     loop {
         let event = timeout(Duration::from_secs(3), client.next_event())
             .await
-            .expect("timed out waiting for client packet")
-            .expect("client event stream unexpectedly ended");
+            .expect("Timed out waiting for client packet")
+            .expect("Client event stream unexpectedly ended");
 
         match event {
             RaknetClientEvent::Packet { payload, .. } => return payload,
             RaknetClientEvent::Disconnected { reason } => {
-                panic!("client disconnected before packet arrived: {reason:?}")
+                panic!("Client disconnected before packet arrived: {reason:?}")
             }
             RaknetClientEvent::Connected { .. }
             | RaknetClientEvent::ReceiptAcked { .. }
@@ -55,8 +55,8 @@ async fn wait_for_client_packet(client: &mut RaknetClient) -> Bytes {
 async fn wait_for_connection_payload(connection: &mut Connection) -> Vec<u8> {
     timeout(Duration::from_secs(3), connection.recv())
         .await
-        .expect("timed out waiting for accepted connection payload")
-        .expect("connection recv failed unexpectedly")
+        .expect("Timed out waiting for accepted connection payload")
+        .expect("Connection recv failed unexpectedly")
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -64,28 +64,28 @@ async fn listener_accepts_and_exchanges_payloads() -> io::Result<()> {
     let bind_addr = allocate_loopback_bind_addr();
     let mut listener = Listener::bind(bind_addr)
         .await
-        .expect("listener bind should succeed");
+        .expect("Listener bind should succeed");
 
     listener.set_pong_data("Compat Listener");
     listener
         .start()
         .await
-        .expect("listener start should succeed");
+        .expect("Listener start should succeed");
 
     let mut client = RaknetClient::connect(bind_addr).await?;
     wait_for_client_connected(&mut client).await;
 
     let mut connection = timeout(Duration::from_secs(3), listener.accept())
         .await
-        .expect("timed out waiting for accepted connection")
-        .expect("listener accept failed");
+        .expect("Timed out waiting for accepted connection")
+        .expect("Listener accept failed");
     let connection_meta = connection.metadata();
     let client_local = client.local_addr()?;
     assert_ne!(connection_meta.id().as_u64(), 0);
     assert_eq!(connection_meta.remote_addr().port(), client_local.port());
     assert!(
         connection_meta.remote_addr().ip().is_loopback(),
-        "accepted remote addr should resolve to loopback, got {}",
+        "Accepted remote addr should resolve to loopback, got {}",
         connection_meta.remote_addr()
     );
 
@@ -99,7 +99,7 @@ async fn listener_accepts_and_exchanges_payloads() -> io::Result<()> {
     connection
         .send(s2c.as_ref())
         .await
-        .expect("connection send should succeed");
+        .expect("Connection send should succeed");
 
     let client_payload = wait_for_client_packet(&mut client).await;
     assert_eq!(client_payload, s2c);
@@ -107,7 +107,7 @@ async fn listener_accepts_and_exchanges_payloads() -> io::Result<()> {
     connection.close().await;
     let _ = client.disconnect(None).await;
 
-    listener.stop().await.expect("listener stop should succeed");
+    listener.stop().await.expect("Listener stop should succeed");
     Ok(())
 }
 
@@ -116,11 +116,11 @@ async fn listener_incoming_yields_connections() -> io::Result<()> {
     let bind_addr = allocate_loopback_bind_addr();
     let mut listener = Listener::bind(bind_addr)
         .await
-        .expect("listener bind should succeed");
+        .expect("Listener bind should succeed");
     listener
         .start()
         .await
-        .expect("listener start should succeed");
+        .expect("Listener start should succeed");
 
     let mut client = RaknetClient::connect(bind_addr).await?;
     wait_for_client_connected(&mut client).await;
@@ -128,11 +128,11 @@ async fn listener_incoming_yields_connections() -> io::Result<()> {
     let connection_meta = {
         let mut incoming = listener
             .incoming()
-            .expect("incoming stream should be available after start");
+            .expect("Incoming stream should be available after start");
         let connection = timeout(Duration::from_secs(3), incoming.next())
             .await
-            .expect("timed out waiting for incoming connection")
-            .expect("incoming stream closed unexpectedly");
+            .expect("Timed out waiting for incoming connection")
+            .expect("Incoming stream closed unexpectedly");
         connection.metadata()
     };
 
