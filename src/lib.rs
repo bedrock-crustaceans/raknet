@@ -42,7 +42,7 @@ macro_rules! low_level_namespace {
 
 macro_rules! reexport_low_level {
     () => {
-        pub use low_level::protocol::{ ConnectedControlPacket, Reliability, Sequence24 };
+        pub use low_level::protocol::{ConnectedControlPacket, Reliability, Sequence24};
         pub use low_level::session::RakPriority;
         pub use low_level::transport::{
             EventOverflowPolicy, ShardedRuntimeConfig, TransportConfig, TransportMetricsSnapshot,

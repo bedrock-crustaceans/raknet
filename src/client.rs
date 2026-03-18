@@ -20,10 +20,7 @@ use crate::protocol::constants::{
     RAKNET_PROTOCOL_VERSION,
 };
 use crate::protocol::datagram::Datagram;
-use crate::protocol::packet::{
-    OfflinePacket, OpenConnectionReply1, OpenConnectionReply2, OpenConnectionRequest1,
-    OpenConnectionRequest2, Request2ParsePath,
-};
+use crate::protocol::packet::{ConnectionRejectReason, OfflinePacket, OpenConnectionReply1, OpenConnectionReply2, OpenConnectionRequest1, OpenConnectionRequest2, Request2ParsePath};
 use crate::protocol::reliability::Reliability;
 use crate::protocol::sequence24::Sequence24;
 use crate::session::{
@@ -1412,27 +1409,33 @@ fn offline_rejection_reason(packet: &OfflinePacket) -> Option<OfflineRejectionRe
                 server_guid: pkt.server_guid,
             })
         }
-        OfflinePacket::ConnectionRequestFailed(pkt) => {
-            Some(OfflineRejectionReason::ConnectionRequestFailed {
-                server_guid: pkt.server_guid,
-            })
-        }
-        OfflinePacket::AlreadyConnected(pkt) => Some(OfflineRejectionReason::AlreadyConnected {
-            server_guid: pkt.server_guid,
-        }),
-        OfflinePacket::NoFreeIncomingConnections(pkt) => {
-            Some(OfflineRejectionReason::NoFreeIncomingConnections {
-                server_guid: pkt.server_guid,
-            })
-        }
-        OfflinePacket::ConnectionBanned(pkt) => Some(OfflineRejectionReason::ConnectionBanned {
-            server_guid: pkt.server_guid,
-        }),
-        OfflinePacket::IpRecentlyConnected(pkt) => {
-            Some(OfflineRejectionReason::IpRecentlyConnected {
-                server_guid: pkt.server_guid,
-            })
-        }
+        OfflinePacket::ConnectionReject(reason) => match reason {
+            ConnectionRejectReason::ConnectionRequestFailed(d) => {
+                Some(OfflineRejectionReason::ConnectionRequestFailed {
+                    server_guid: d.server_guid,
+                })
+            }
+            ConnectionRejectReason::AlreadyConnected(d) => {
+                Some(OfflineRejectionReason::AlreadyConnected {
+                    server_guid: d.server_guid,
+                })
+            }
+            ConnectionRejectReason::NoFreeIncomingConnections(d) => {
+                Some(OfflineRejectionReason::NoFreeIncomingConnections {
+                    server_guid: d.server_guid,
+                })
+            }
+            ConnectionRejectReason::ConnectionBanned(d) => {
+                Some(OfflineRejectionReason::ConnectionBanned {
+                    server_guid: d.server_guid,
+                })
+            }
+            ConnectionRejectReason::IpRecentlyConnected(d) => {
+                Some(OfflineRejectionReason::IpRecentlyConnected {
+                    server_guid: d.server_guid,
+                })
+            }
+        },
         _ => None,
     }
 }
@@ -1500,7 +1503,7 @@ mod tests {
         ReconnectPolicy, is_connected_control_id, is_offline_packet_id, next_backoff,
         offline_rejection_reason, should_retry_connect,
     };
-    use crate::protocol::packet::{ConnectionBanned, OfflinePacket};
+    use crate::protocol::packet::{ConnectionRejectReason, OfflinePacket, RejectData};
     use crate::protocol::reliability::Reliability;
     use crate::session::RakPriority;
     use std::time::Duration;
@@ -1525,10 +1528,12 @@ mod tests {
 
     #[test]
     fn rejection_mapping_extracts_reason() {
-        let packet = OfflinePacket::ConnectionBanned(ConnectionBanned {
-            server_guid: 7,
-            magic: crate::protocol::constants::DEFAULT_UNCONNECTED_MAGIC,
-        });
+        let packet = OfflinePacket::ConnectionReject(
+            ConnectionRejectReason::ConnectionBanned(RejectData {
+                server_guid: 7,
+                magic: crate::protocol::constants::DEFAULT_UNCONNECTED_MAGIC,
+            })
+        );
         assert_eq!(
             offline_rejection_reason(&packet),
             Some(OfflineRejectionReason::ConnectionBanned { server_guid: 7 })

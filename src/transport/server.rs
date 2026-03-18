@@ -22,11 +22,7 @@ use crate::protocol::connected::{
 use crate::protocol::constants::{MAXIMUM_MTU_SIZE, MINIMUM_MTU_SIZE, RAKNET_PROTOCOL_VERSION};
 use crate::protocol::datagram::{Datagram, DatagramPayload};
 use crate::protocol::frame::Frame;
-use crate::protocol::packet::{
-    AlreadyConnected, ConnectionBanned, IncompatibleProtocolVersion, IpRecentlyConnected,
-    NoFreeIncomingConnections, OfflinePacket, OpenConnectionReply1, OpenConnectionReply2,
-    Request2ParsePath, UnconnectedPong,
-};
+use crate::protocol::packet::{ConnectionRejectReason, RejectData, IncompatibleProtocolVersion, OfflinePacket, OpenConnectionReply1, OpenConnectionReply2, Request2ParsePath, UnconnectedPong};
 use crate::protocol::reliability::Reliability;
 use crate::protocol::sequence24::Sequence24;
 use crate::session::{
@@ -1307,34 +1303,42 @@ impl TransportServer {
     }
 
     async fn send_no_free_incoming_connections(&mut self, addr: SocketAddr) -> io::Result<()> {
-        let packet = OfflinePacket::NoFreeIncomingConnections(NoFreeIncomingConnections {
-            server_guid: self.config.server_guid,
-            magic: self.config.unconnected_magic,
-        });
+        let packet = OfflinePacket::ConnectionReject(
+            ConnectionRejectReason::NoFreeIncomingConnections(RejectData {
+                server_guid: self.config.server_guid,
+                magic: self.config.unconnected_magic,
+            })
+        );
         self.send_offline_packet(addr, &packet).await
     }
 
     async fn send_connection_banned(&mut self, addr: SocketAddr) -> io::Result<()> {
-        let packet = OfflinePacket::ConnectionBanned(ConnectionBanned {
-            server_guid: self.config.server_guid,
-            magic: self.config.unconnected_magic,
-        });
+        let packet = OfflinePacket::ConnectionReject(
+            ConnectionRejectReason::ConnectionBanned(RejectData {
+                server_guid: self.config.server_guid,
+                magic: self.config.unconnected_magic,
+            })
+        );
         self.send_offline_packet(addr, &packet).await
     }
 
     async fn send_already_connected(&mut self, addr: SocketAddr) -> io::Result<()> {
-        let packet = OfflinePacket::AlreadyConnected(AlreadyConnected {
-            server_guid: self.config.server_guid,
-            magic: self.config.unconnected_magic,
-        });
+        let packet = OfflinePacket::ConnectionReject(
+            ConnectionRejectReason::AlreadyConnected(RejectData {
+                server_guid: self.config.server_guid,
+                magic: self.config.unconnected_magic,
+            })
+        );
         self.send_offline_packet(addr, &packet).await
     }
 
     async fn send_ip_recently_connected(&mut self, addr: SocketAddr) -> io::Result<()> {
-        let packet = OfflinePacket::IpRecentlyConnected(IpRecentlyConnected {
-            server_guid: self.config.server_guid,
-            magic: self.config.unconnected_magic,
-        });
+        let packet = OfflinePacket::ConnectionReject(
+            ConnectionRejectReason::IpRecentlyConnected(RejectData {
+                server_guid: self.config.server_guid,
+                magic: self.config.unconnected_magic,
+            })
+        );
         self.send_offline_packet(addr, &packet).await
     }
 
