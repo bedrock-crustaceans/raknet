@@ -15,17 +15,11 @@ usable as a general RakNet library.
 
 ### Installation
 
-With `cargo add`:
-
-```bash
-cargo add raknet-rs
-```
-
-Or edit `Cargo.toml` directly:
+Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-raknet-rs = "0.2.0"
+raknet = { git = "https://github.com/bedrock-crustaceans/raknet-rs.git" }
 ```
 
 ## API Surface
