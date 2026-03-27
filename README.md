@@ -1,13 +1,17 @@
-# raknet-rs
+<br />
+<div align="center">
 
-[![Rust](https://img.shields.io/badge/Rust-2024_edition-000000?logo=rust)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
-[![Status](https://img.shields.io/badge/Status-Stable-brightgreen)](#)
-[![Platform](https://img.shields.io/badge/Platform-%20RakNet-2ea44f)](#)
+# RakNet
 
-`raknet-rs` is a RakNet transport library written in Rust.
+A RakNet transport library written in Rust.
 
-It is built for modern async server/client networking and is especially useful for
+[![rust][rust_badge_url]][rust_url]
+[![transport][transport_badge_url]][transport_url]
+[![license][license_badge_url]][license_url]
+
+</div>
+
+Built for modern async server/client networking and is especially useful for
 Minecraft Bedrock Edition projects (servers, proxies, and tooling), while still remaining
 usable as a general RakNet library.
 
@@ -19,13 +23,13 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-raknet = { git = "https://github.com/bedrock-crustaceans/raknet-rs.git" }
+raknet = { git = "https://github.com/bedrock-crustaceans/raknet.git" }
 ```
 
 ## API Surface
 
 - Stable application API lives under `client`, `server`, `listener`, `connection` and root re-exports.
-- Advanced low-level API is namespaced under `raknet_rs::low_level::{protocol, session, transport}`.
+- Advanced low-level API is namespaced under `raknet::low_level::{protocol, session, transport}`.
 
 ### Usage
 
@@ -33,7 +37,7 @@ Basic server:
 
 ```rust
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use raknet_rs::server::{RaknetServer, RaknetServerEvent};
+use raknet::server::{RaknetServer, RaknetServerEvent};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> std::io::Result<()> {
@@ -54,7 +58,7 @@ Basic client:
 
 ```rust
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use raknet_rs::client::{RaknetClient, RaknetClientEvent};
+use raknet::client::{RaknetClient, RaknetClientEvent};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> std::io::Result<()> {
@@ -79,7 +83,7 @@ Callback facade (`on_connect / on_packet / on_disconnect`):
 ```rust
 use std::pin::Pin;
 use std::future::Future;
-use raknet_rs::server::RaknetServer;
+use raknet::server::RaknetServer;
 
 fn hook_ok<'a>() -> Pin<Box<dyn Future<Output = std::io::Result<()>> + Send + 'a>> {
     Box::pin(async { Ok(()) })
@@ -105,7 +109,7 @@ Listener incoming helper:
 
 ```rust
 use std::net::SocketAddr;
-use raknet_rs::Listener;
+use raknet::Listener;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> std::io::Result<()> {
@@ -131,6 +135,13 @@ async fn main() -> std::io::Result<()> {
   - `exporter.ingest_server_event(&event)`
   - `let body = exporter.render_prometheus()`
 
-## License
+<!-- BADGES -->
+[transport_badge_url]: https://img.shields.io/badge/transport-raknet-black?style=flat-square
+[transport_url]: https://github.com/facebookarchive/RakNet
 
-Apache-2.0. See [LICENSE](LICENSE) for details.
+[rust_badge_url]: https://img.shields.io/badge/rust-2024-%23D34516?style=flat-square&logo=rust&logoColor=%23D34516&labelColor=white
+[rust_url]: https://rust-lang.org/
+
+[license_badge_url]: https://img.shields.io/github/license/bedrock-crustaceans/raknet?style=flat-square
+[license_url]: LICENSE
+<!-- BADGES -->
