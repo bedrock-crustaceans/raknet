@@ -320,7 +320,7 @@ pub trait EventFacadeHandler {
         _addr: IpAddr,
         _port: u16,
         _client_guid: u64,
-    ) -> ServerHookFuture {
+    ) -> ServerHookFuture<'_> {
         Box::pin(async { Ok(()) })
     }
 
@@ -328,15 +328,15 @@ pub trait EventFacadeHandler {
         &mut self,
         _session_id: u64,
         _reason: PeerDisconnectReason,
-    ) -> ServerHookFuture {
+    ) -> ServerHookFuture<'_> {
         Box::pin(async { Ok(()) })
     }
 
-    fn on_packet(&mut self, _session_id: u64, _payload: Bytes) -> ServerHookFuture {
+    fn on_packet(&mut self, _session_id: u64, _payload: Bytes) -> ServerHookFuture<'_> {
         Box::pin(async { Ok(()) })
     }
 
-    fn on_ack(&mut self, _session_id: u64, _receipt_id: u64) -> ServerHookFuture {
+    fn on_ack(&mut self, _session_id: u64, _receipt_id: u64) -> ServerHookFuture<'_> {
         Box::pin(async { Ok(()) })
     }
 
@@ -345,7 +345,7 @@ pub trait EventFacadeHandler {
         _shard_id: usize,
         _snapshot: TransportMetricsSnapshot,
         _dropped_non_critical_events: u64,
-    ) -> ServerHookFuture {
+    ) -> ServerHookFuture<'_> {
         Box::pin(async { Ok(()) })
     }
 }
@@ -556,7 +556,7 @@ pub trait SessionFacadeHandler {
         _addr: IpAddr,
         _port: u16,
         _client_guid: u64,
-    ) -> ServerHookFuture {
+    ) -> ServerHookFuture<'_> {
         Box::pin(async { Ok(()) })
     }
 
@@ -564,7 +564,7 @@ pub trait SessionFacadeHandler {
         &mut self,
         _session_id: SessionId,
         _reason: PeerDisconnectReason,
-    ) -> ServerHookFuture {
+    ) -> ServerHookFuture<'_> {
         Box::pin(async { Ok(()) })
     }
 
@@ -572,11 +572,11 @@ pub trait SessionFacadeHandler {
         &mut self,
         _session_id: SessionId,
         _payload: Bytes,
-    ) -> ServerHookFuture {
+    ) -> ServerHookFuture<'_> {
         Box::pin(async { Ok(()) })
     }
 
-    fn on_ack(&mut self, _session_id: SessionId, _receipt_id: u64) -> ServerHookFuture {
+    fn on_ack(&mut self, _session_id: SessionId, _receipt_id: u64) -> ServerHookFuture<'_> {
         Box::pin(async { Ok(()) })
     }
 
