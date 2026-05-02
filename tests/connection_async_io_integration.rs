@@ -3,8 +3,8 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use bytes::Bytes;
-use raknet_rs::client::{RaknetClient, RaknetClientEvent};
-use raknet_rs::listener::Listener;
+use raknet::client::{RaknetClient, RaknetClientEvent};
+use raknet::listener::Listener;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 

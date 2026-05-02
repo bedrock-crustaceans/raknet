@@ -3,9 +3,9 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use bytes::Bytes;
-use raknet_rs::client::{RaknetClient, RaknetClientEvent};
-use raknet_rs::connection::{Connection, ConnectionCloseReason, RecvError};
-use raknet_rs::listener::Listener;
+use raknet::client::{RaknetClient, RaknetClientEvent};
+use raknet::connection::{Connection, ConnectionCloseReason, RecvError};
+use raknet::listener::Listener;
 use tokio::time::timeout;
 
 fn allocate_loopback_bind_addr() -> SocketAddr {

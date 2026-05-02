@@ -3,17 +3,17 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use raknet_rs::client::{ClientSendOptions, RaknetClient, RaknetClientError, RaknetClientEvent};
-use raknet_rs::low_level::protocol::reliability::Reliability;
-use raknet_rs::low_level::session::RakPriority;
-use raknet_rs::low_level::transport::EventOverflowPolicy;
-use raknet_rs::proxy::{
+use raknet::client::{ClientSendOptions, RaknetClient, RaknetClientError, RaknetClientEvent};
+use raknet::low_level::protocol::reliability::Reliability;
+use raknet::low_level::session::RakPriority;
+use raknet::low_level::transport::EventOverflowPolicy;
+use raknet::proxy::{
     PassthroughRelayPolicy, RaknetRelayProxy, RaknetRelayProxyEvent, RelayContract,
     RelayContractConfig, RelayDecision, RelayDirection, RelayDropReason, RelayOverflowPolicy,
     RelayPolicy, RelayRuntimeConfig, RelaySessionCloseReason, UpstreamConnector,
     UpstreamConnectorConfig,
 };
-use raknet_rs::server::{PeerId, RaknetServer, RaknetServerEvent, SendOptions};
+use raknet::server::{PeerId, RaknetServer, RaknetServerEvent, SendOptions};
 use tokio::time::timeout;
 
 fn allocate_loopback_bind_addr() -> SocketAddr {

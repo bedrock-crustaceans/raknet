@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use bytes::Bytes;
-use raknet_rs::client::{RaknetClient, RaknetClientEvent};
-use raknet_rs::server::{RaknetServer, ServerFacade};
+use raknet::client::{RaknetClient, RaknetClientEvent};
+use raknet::server::{RaknetServer, ServerFacade};
 use tokio::time::timeout;
 
 fn allocate_loopback_bind_addr() -> SocketAddr {
