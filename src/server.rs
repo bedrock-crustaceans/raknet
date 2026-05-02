@@ -1298,34 +1298,34 @@ mod tests {
 
     impl EventFacadeHandler for CountingEventHandler {
         fn on_connect(
-            &mut self,
+            &'_ mut self,
             session_id: u64,
             addr: IpAddr,
             port: u16,
             client_guid: u64,
-        ) -> ServerHookFuture {
+        ) -> ServerHookFuture<'_> {
             self.connect_calls = self.connect_calls.saturating_add(1);
             self.last_connect = Some((session_id, addr, port, client_guid));
             Box::pin(async { Ok(()) })
         }
 
         fn on_disconnect(
-            &mut self,
+            &'_ mut self,
             session_id: u64,
             reason: PeerDisconnectReason,
-        ) -> ServerHookFuture {
+        ) -> ServerHookFuture<'_> {
             self.disconnect_calls = self.disconnect_calls.saturating_add(1);
             self.last_disconnect = Some((session_id, reason));
             Box::pin(async { Ok(()) })
         }
 
-        fn on_packet(&mut self, session_id: u64, payload: Bytes) -> ServerHookFuture {
+        fn on_packet(&'_ mut self, session_id: u64, payload: Bytes) -> ServerHookFuture<'_> {
             self.packet_calls = self.packet_calls.saturating_add(1);
             self.last_packet = Some((session_id, payload));
             Box::pin(async { Ok(()) })
         }
 
-        fn on_ack(&mut self, session_id: u64, receipt_id: u64) -> ServerHookFuture {
+        fn on_ack(&'_ mut self, session_id: u64, receipt_id: u64) -> ServerHookFuture<'_> {
             self.ack_calls = self.ack_calls.saturating_add(1);
             self.last_ack = Some((session_id, receipt_id));
             Box::pin(async { Ok(()) })
@@ -1336,7 +1336,7 @@ mod tests {
             shard_id: usize,
             snapshot: TransportMetricsSnapshot,
             dropped_non_critical_events: u64,
-        ) -> ServerHookFuture {
+        ) -> ServerHookFuture<'_> {
             self.metrics_calls = self.metrics_calls.saturating_add(1);
             self.last_metrics = Some((shard_id, snapshot, dropped_non_critical_events));
             Box::pin(async { Ok(()) })
@@ -1464,7 +1464,7 @@ mod tests {
             addr: IpAddr,
             port: u16,
             client_guid: u64,
-        ) -> ServerHookFuture {
+        ) -> ServerHookFuture<'_> {
             self.connect_calls = self.connect_calls.saturating_add(1);
             self.last_connect = Some((session_id, addr, port, client_guid));
             Box::pin(async { Ok(()) })
@@ -1474,27 +1474,27 @@ mod tests {
             &mut self,
             session_id: SessionId,
             reason: PeerDisconnectReason,
-        ) -> ServerHookFuture {
+        ) -> ServerHookFuture<'_> {
             self.disconnect_calls = self.disconnect_calls.saturating_add(1);
             self.last_disconnect = Some((session_id, reason));
             Box::pin(async { Ok(()) })
         }
 
         fn on_packet(
-            &mut self,
+            &'_ mut self,
             session_id: SessionId,
             payload: Bytes,
-        ) -> ServerHookFuture {
+        ) -> ServerHookFuture<'_> {
             self.packet_calls = self.packet_calls.saturating_add(1);
             self.last_packet = Some((session_id, payload));
             Box::pin(async { Ok(()) })
         }
 
         fn on_ack(
-            &mut self,
+            &'_ mut self,
             session_id: SessionId,
             receipt_id: u64,
-        ) -> ServerHookFuture {
+        ) -> ServerHookFuture<'_> {
             self.ack_calls = self.ack_calls.saturating_add(1);
             self.last_ack = Some((session_id, receipt_id));
             Box::pin(async { Ok(()) })
@@ -1505,7 +1505,7 @@ mod tests {
             shard_id: usize,
             snapshot: TransportMetricsSnapshot,
             dropped_non_critical_events: u64,
-        ) -> ServerHookFuture {
+        ) -> ServerHookFuture<'_> {
             self.metrics_calls = self.metrics_calls.saturating_add(1);
             self.last_metrics = Some((shard_id, snapshot, dropped_non_critical_events));
             Box::pin(async { Ok(()) })
