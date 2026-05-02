@@ -7,9 +7,7 @@ use raknet::client::{
     ClientDisconnectReason, ClientSendOptions, OfflineRejectionReason, RaknetClient,
     RaknetClientConfig, RaknetClientError, RaknetClientEvent, ReconnectPolicy,
 };
-use raknet::low_level::protocol::connected::{
-    ConnectedControlPacket, DisconnectionNotification,
-};
+use raknet::low_level::protocol::connected::{ConnectedControlPacket, DisconnectionNotification};
 use raknet::low_level::transport::EventOverflowPolicy;
 use raknet::server::{PeerId, RaknetServer, RaknetServerEvent};
 use tokio::time::timeout;
