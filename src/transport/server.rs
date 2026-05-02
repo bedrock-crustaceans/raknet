@@ -1,3 +1,4 @@
+use hmac::KeyInit;
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
@@ -2242,7 +2243,7 @@ impl TransportServer {
     }
 
     fn compute_cookie_for_key(&self, addr: SocketAddr, key: &[u8]) -> u32 {
-        let mut mac = HmacSha256::new_from_slice(key).expect("HMAC supports arbitrary key lengths");
+        let mut mac = Hmac::new_from_slice(key).expect("HMAC supports arbitrary key lengths");
         update_mac_with_socket_addr(&mut mac, addr);
         update_mac_with_socket_addr(&mut mac, self.config.bind_addr);
         mac.update(&self.config.server_guid.to_le_bytes());
@@ -2272,7 +2273,7 @@ fn primary_protocol_version(supported: &[u8]) -> u8 {
 
 fn random_cookie_key() -> [u8; COOKIE_KEY_LEN] {
     let mut key = [0u8; COOKIE_KEY_LEN];
-    if getrandom::getrandom(&mut key).is_ok() {
+    if getrandom::fill(&mut key).is_ok() {
         return key;
     }
 

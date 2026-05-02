@@ -1481,7 +1481,7 @@ fn build_internal_addrs(server_addr: SocketAddr) -> [SocketAddr; SYSTEM_ADDRESS_
 
 fn random_guid() -> u64 {
     let mut bytes = [0u8; 8];
-    if getrandom::getrandom(&mut bytes).is_ok() {
+    if getrandom::fill(&mut bytes).is_ok() {
         return u64::from_le_bytes(bytes);
     }
 
