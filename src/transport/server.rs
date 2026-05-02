@@ -1399,7 +1399,7 @@ impl TransportServer {
                     return Ok(None);
                 }
 
-                if self.is_ip_recently_connected(addr, now) {
+                if self.has_ip_recently_connected(addr, now) {
                     self.handshake_ip_recently_connected_rejects = self
                         .handshake_ip_recently_connected_rejects
                         .saturating_add(1);
@@ -1484,7 +1484,7 @@ impl TransportServer {
                 self.send_offline_packet(addr, &reply).await?;
             }
             OfflinePacket::OpenConnectionRequest2(req2) => {
-                if self.is_ip_recently_connected(addr, now) {
+                if self.has_ip_recently_connected(addr, now) {
                     self.handshake_ip_recently_connected_rejects = self
                         .handshake_ip_recently_connected_rejects
                         .saturating_add(1);
@@ -2085,7 +2085,7 @@ impl TransportServer {
         }
     }
 
-    fn is_ip_recently_connected(&mut self, addr: SocketAddr, now: Instant) -> bool {
+    fn has_ip_recently_connected(&mut self, addr: SocketAddr, now: Instant) -> bool {
         self.prune_ip_recently_connected(now);
         self.ip_recently_connected_until
             .get(&addr.ip())
