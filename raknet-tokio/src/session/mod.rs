@@ -72,13 +72,17 @@ impl RakSession {
                             timeout.as_mut().reset(Instant::now() + when)
                         }
                         RakSessionOutput::Datagram(buf, addr) => {
+                            if let Some(&b) = buf.first() {
+                                debug!("sending packet {:#04X} to {}", b, addr);
+                            };
+                            
                             let _ = datagram_tx.send((buf, addr));
                         }
                         RakSessionOutput::Packet(buf) => {
                             let Some(&b) = buf.first() else {
                                 continue;
                             };
-                            debug!("received packet 0x{:02X} from {}", b, session.addr);
+                            debug!("received packet {:#04X} from {}", b, session.addr);
 
                             let _ = buf_tx.send(buf);
                         }
