@@ -1,8 +1,9 @@
 use crate::protocol::codec::RakCodec;
+use crate::protocol::error::RakCodecError;
 use crate::util::constants::MAGIC;
 use crate::util::packet_id::INCOMPATIBLE_PROTOCOL;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use std::io::{Error, ErrorKind, Read, Write};
+use std::io::{Read, Write};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IncompatibleProtocol {
@@ -11,7 +12,7 @@ pub struct IncompatibleProtocol {
 }
 
 impl RakCodec for IncompatibleProtocol {
-    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), Error> {
+    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), RakCodecError> {
         writer.write_u8(INCOMPATIBLE_PROTOCOL)?;
         writer.write_u8(self.protocol)?;
         writer.write_all(&MAGIC)?;
@@ -20,13 +21,10 @@ impl RakCodec for IncompatibleProtocol {
         Ok(())
     }
 
-    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, Error> {
+    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, RakCodecError> {
         let id = reader.read_u8()?;
         if id != INCOMPATIBLE_PROTOCOL {
-            return Err(Error::new(
-                ErrorKind::InvalidData,
-                "not an IncompatibleProtocol",
-            ));
+            return Err(RakCodecError::UnexpectedPacketID(INCOMPATIBLE_PROTOCOL, id));
         }
 
         let protocol = reader.read_u8()?;
@@ -35,7 +33,7 @@ impl RakCodec for IncompatibleProtocol {
         reader.read_exact(&mut magic)?;
 
         if magic != MAGIC {
-            return Err(Error::new(ErrorKind::InvalidData, "invalid magic"));
+            return Err(RakCodecError::UnexpectedMagic);
         }
 
         let guid = reader.read_u64::<BigEndian>()?;

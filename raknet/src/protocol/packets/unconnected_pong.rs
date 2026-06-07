@@ -1,8 +1,9 @@
 use crate::protocol::codec::RakCodec;
+use crate::protocol::error::RakCodecError;
 use crate::util::constants::MAGIC;
 use crate::util::packet_id::UNCONNECTED_PONG;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use std::io::{Error, ErrorKind, Read, Write};
+use std::io::{Read, Write};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UnconnectedPong {
@@ -12,7 +13,7 @@ pub struct UnconnectedPong {
 }
 
 impl RakCodec for UnconnectedPong {
-    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), Error> {
+    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), RakCodecError> {
         writer.write_u8(UNCONNECTED_PONG)?;
         writer.write_u64::<BigEndian>(self.timestamp)?;
         writer.write_u64::<BigEndian>(self.guid)?;
@@ -23,10 +24,10 @@ impl RakCodec for UnconnectedPong {
         Ok(())
     }
 
-    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, Error> {
+    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, RakCodecError> {
         let id = reader.read_u8()?;
         if id != UNCONNECTED_PONG {
-            return Err(Error::new(ErrorKind::InvalidData, "not an UnconnectedPong"));
+            return Err(RakCodecError::UnexpectedPacketID(UNCONNECTED_PONG, id));
         }
 
         let timestamp = reader.read_u64::<BigEndian>()?;
@@ -35,7 +36,7 @@ impl RakCodec for UnconnectedPong {
         let mut magic = [0u8; MAGIC.len()];
         reader.read_exact(&mut magic)?;
         if magic != MAGIC {
-            return Err(Error::new(ErrorKind::InvalidData, "invalid magic"));
+            return Err(RakCodecError::UnexpectedMagic);
         }
 
         let message_len = reader.read_u16::<BigEndian>()?;

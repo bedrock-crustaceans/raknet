@@ -1,8 +1,9 @@
 use crate::protocol::codec::RakCodec;
+use crate::protocol::error::RakCodecError;
 use crate::types::reliability::RakReliability;
 use crate::util::flags::SPLIT;
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
-use std::io::{Error, ErrorKind, Read, Write};
+use std::io::{Read, Write};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Frame {
@@ -38,7 +39,7 @@ impl Frame {
 }
 
 impl RakCodec for Frame {
-    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), Error> {
+    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), RakCodecError> {
         let mut flags = (self.reliability as u8) << 5;
         if self.is_split() {
             flags |= SPLIT;
@@ -71,10 +72,10 @@ impl RakCodec for Frame {
         Ok(())
     }
 
-    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, Error> {
+    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, RakCodecError> {
         let header = reader.read_u8()?;
         let reliability = RakReliability::try_from((header & 0xE0) >> 5)
-            .map_err(|_| Error::new(ErrorKind::InvalidData, "invalid reliability"))?;
+            .map_err(|_| RakCodecError::Malformed("frame reliability"))?;
 
         let length = (reader.read_u16::<BigEndian>()? as usize + 7) >> 3;
 

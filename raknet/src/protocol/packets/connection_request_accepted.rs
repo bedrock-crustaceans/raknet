@@ -1,7 +1,8 @@
 use crate::protocol::codec::RakCodec;
+use crate::protocol::error::RakCodecError;
 use crate::util::packet_id::CONNECTION_REQUEST_ACCEPTED;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use std::io::{Cursor, Error, ErrorKind, Read, Write};
+use std::io::{Cursor, Read, Write};
 use std::net::SocketAddr;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -14,7 +15,7 @@ pub struct ConnectionRequestAccepted {
 }
 
 impl RakCodec for ConnectionRequestAccepted {
-    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), Error> {
+    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), RakCodecError> {
         writer.write_u8(CONNECTION_REQUEST_ACCEPTED)?;
         SocketAddr::serialize(&self.client_address, writer)?;
         writer.write_u16::<BigEndian>(self.system_index)?;
@@ -27,12 +28,12 @@ impl RakCodec for ConnectionRequestAccepted {
         Ok(())
     }
 
-    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, Error> {
+    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, RakCodecError> {
         let id = reader.read_u8()?;
         if id != CONNECTION_REQUEST_ACCEPTED {
-            return Err(Error::new(
-                ErrorKind::InvalidData,
-                "not a ConnectionRequestAccepted",
+            return Err(RakCodecError::UnexpectedPacketID(
+                CONNECTION_REQUEST_ACCEPTED,
+                id,
             ));
         }
 

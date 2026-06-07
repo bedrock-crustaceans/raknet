@@ -1,10 +1,11 @@
 use crate::protocol::codec::RakCodec;
+use crate::protocol::error::RakCodecError;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use std::io::{Error, ErrorKind, Read, Write};
+use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 impl RakCodec for SocketAddr {
-    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), Error> {
+    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), RakCodecError> {
         match self {
             SocketAddr::V4(addr) => {
                 writer.write_u8(4)?;
@@ -24,7 +25,7 @@ impl RakCodec for SocketAddr {
         Ok(())
     }
 
-    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, Error> {
+    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, RakCodecError> {
         match reader.read_u8()? {
             4 => {
                 let mut octets = [0u8; 4];
@@ -47,7 +48,7 @@ impl RakCodec for SocketAddr {
                     ip, port, flowinfo, scope_id,
                 )))
             }
-            _ => Err(Error::new(ErrorKind::InvalidData, "invalid socket address")),
+            _ => Err(RakCodecError::Malformed("socket addr")),
         }
     }
 

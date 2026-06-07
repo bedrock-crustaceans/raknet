@@ -1,7 +1,8 @@
 use crate::protocol::codec::RakCodec;
+use crate::protocol::error::RakCodecError;
 use crate::util::flags::{ACK, NACK, VALID};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
-use std::io::{Error, ErrorKind, Read, Write};
+use std::io::{Error, Read, Write};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ack {
@@ -40,7 +41,7 @@ impl Ack {
 }
 
 impl RakCodec for Ack {
-    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), Error> {
+    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), RakCodecError> {
         writer.write_u8(VALID | if self.is_nack { NACK } else { ACK })?;
 
         let (&first, rest) = match self.sequences.split_first() {
@@ -76,13 +77,10 @@ impl RakCodec for Ack {
         Ok(())
     }
 
-    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, Error> {
+    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, RakCodecError> {
         let id = reader.read_u8()?;
         if id & VALID == 0 || (id & (ACK | NACK)).count_ones() != 1 {
-            return Err(Error::new(
-                ErrorKind::InvalidInput,
-                "invalid, not an ack or nack",
-            ));
+            return Err(RakCodecError::UnexpectedHeader(id));
         }
 
         let is_nack = id & NACK != 0;
@@ -97,10 +95,7 @@ impl RakCodec for Ack {
                 let start: u32 = reader.read_u24::<LittleEndian>()?;
                 let end: u32 = reader.read_u24::<LittleEndian>()?;
                 if end < start {
-                    return Err(Error::new(
-                        ErrorKind::InvalidData,
-                        "invalid range, end < start",
-                    ));
+                    return Err(RakCodecError::Malformed("ack range invalid, end < start"));
                 }
                 sequences.extend(start..end);
             }

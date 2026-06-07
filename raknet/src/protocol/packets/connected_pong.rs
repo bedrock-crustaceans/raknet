@@ -1,7 +1,8 @@
 use crate::protocol::codec::RakCodec;
+use crate::protocol::error::RakCodecError;
 use crate::util::packet_id::CONNECTED_PONG;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use std::io::{Error, ErrorKind, Read, Write};
+use std::io::{Read, Write};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConnectedPong {
@@ -10,7 +11,7 @@ pub struct ConnectedPong {
 }
 
 impl RakCodec for ConnectedPong {
-    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), Error> {
+    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), RakCodecError> {
         writer.write_u8(CONNECTED_PONG)?;
         writer.write_u64::<BigEndian>(self.ping_timestamp)?;
         writer.write_u64::<BigEndian>(self.timestamp)?;
@@ -18,10 +19,10 @@ impl RakCodec for ConnectedPong {
         Ok(())
     }
 
-    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, Error> {
+    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, RakCodecError> {
         let id = reader.read_u8()?;
         if id != CONNECTED_PONG {
-            return Err(Error::new(ErrorKind::InvalidData, "not a ConnectedPong"));
+            return Err(RakCodecError::UnexpectedPacketID(CONNECTED_PONG, id));
         }
 
         let ping_timestamp = reader.read_u64::<BigEndian>()?;

@@ -38,28 +38,31 @@ impl RakSession {
                 tokio::select! {
                     Some(msg) = msg_rx.recv() => {
                         match msg {
-                            RakSessionMsg::Send(buf, reliability, priority) => {
+                            RakSessionMsg::Send(buf, reliability, priority, sender) => {
                                 let now = SystemTime::now();
 
-                                session.handle(RakSessionInput::Send(buf, reliability, priority, now)).unwrap();
+                                let res = session.handle(RakSessionInput::Send(buf, reliability, priority, now));
+                                let _ = sender.send(res);
                             }
                             RakSessionMsg::Close(sender) => {
                                 let now = SystemTime::now();
 
-                                session.handle(RakSessionInput::Disconnect(now)).unwrap();
-
-                                sender.send(()).unwrap();
+                                let res = session.handle(RakSessionInput::Disconnect(now));
+                                let _ = sender.send(res);
                             }
-                            _ => {},
+                            RakSessionMsg::IsClosed(sender) => {
+                                let closed = matches!(session.get_state(), RakSessionState::Disconnected);
+                                let _ = sender.send(closed);
+                            },
                         }
                     }
                     Some(recv) = rx.recv() => {
-                        session.handle(recv).unwrap();
+                        let _ = session.handle(recv);
                     }
                     _ = &mut timeout => {
                         let now = SystemTime::now();
 
-                        session.handle(RakSessionInput::Timeout(now)).unwrap();
+                        let _ = session.handle(RakSessionInput::Timeout(now));
                     }
                 }
 
@@ -69,7 +72,7 @@ impl RakSession {
                             timeout.as_mut().reset(Instant::now() + when)
                         }
                         RakSessionOutput::Datagram(buf, addr) => {
-                            datagram_tx.send((buf, addr)).unwrap();
+                            let _ = datagram_tx.send((buf, addr));
                         }
                         RakSessionOutput::Packet(buf) => {
                             let Some(&b) = buf.first() else {
@@ -77,7 +80,7 @@ impl RakSession {
                             };
                             debug!("received packet 0x{:02X} from {}", b, session.addr);
 
-                            buf_tx.send(buf).unwrap();
+                            let _ = buf_tx.send(buf);
                         }
                         RakSessionOutput::Disconnected(..) => return,
                     }
@@ -102,26 +105,21 @@ impl RakSession {
         self.buf_rx.recv().await.map(Into::into)
     }
 
-    pub fn try_recv<T>(&mut self) -> Option<T>
-    where
-        Box<[u8]>: Into<T>,
-    {
-        self.buf_rx.try_recv().ok().map(Into::into)
-    }
-
-    pub fn send<T>(&self, buf: T, reliability: RakReliability, priority: RakPriority)
+    pub async fn send<T>(&self, buf: T, reliability: RakReliability, priority: RakPriority) -> Result<(), RakSessionError>
     where
         T: Into<Box<[u8]>>,
     {
-        let _ = self
-            .msg_tx
-            .send(RakSessionMsg::Send(buf.into(), reliability, priority));
+        let (tx, rx) = oneshot::channel();
+        
+        self.msg_tx.send(RakSessionMsg::Send(buf.into(), reliability, priority, tx)).map_err(|_| RakSessionError::Closed)?;
+        rx.await.map_err(|_| RakSessionError::Closed)?
     }
 
-    pub async fn close(&self) {
+    pub async fn close(&self) -> Result<(), RakSessionError> {
         let (tx, rx) = oneshot::channel();
-        let _ = self.msg_tx.send(RakSessionMsg::Close(tx));
-        let _ = rx.await;
+        
+        self.msg_tx.send(RakSessionMsg::Close(tx)).map_err(|_| RakSessionError::Closed)?;
+        rx.await.map_err(|_| RakSessionError::Closed)?
     }
 
     pub async fn is_closed(&self) -> bool {

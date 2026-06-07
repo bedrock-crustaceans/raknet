@@ -1,8 +1,9 @@
 use crate::protocol::codec::RakCodec;
+use crate::protocol::error::RakCodecError;
 use crate::util::constants::MAGIC;
 use crate::util::packet_id::OPEN_CONNECTION_REPLY_1;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use std::io::{Error, ErrorKind, Read, Write};
+use std::io::{Read, Write};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OpenConnectionReply1 {
@@ -12,7 +13,7 @@ pub struct OpenConnectionReply1 {
 }
 
 impl RakCodec for OpenConnectionReply1 {
-    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), Error> {
+    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), RakCodecError> {
         writer.write_u8(OPEN_CONNECTION_REPLY_1)?;
         writer.write_all(&MAGIC)?;
         writer.write_u64::<BigEndian>(self.guid)?;
@@ -28,12 +29,12 @@ impl RakCodec for OpenConnectionReply1 {
         Ok(())
     }
 
-    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, Error> {
+    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, RakCodecError> {
         let id = reader.read_u8()?;
         if id != OPEN_CONNECTION_REPLY_1 {
-            return Err(Error::new(
-                ErrorKind::InvalidData,
-                "not an OpenConnectionReply1",
+            return Err(RakCodecError::UnexpectedPacketID(
+                OPEN_CONNECTION_REPLY_1,
+                id,
             ));
         }
 
@@ -41,7 +42,7 @@ impl RakCodec for OpenConnectionReply1 {
         reader.read_exact(&mut magic)?;
 
         if magic != MAGIC {
-            return Err(Error::new(ErrorKind::InvalidData, "invalid magic"));
+            return Err(RakCodecError::UnexpectedMagic);
         }
 
         let guid = reader.read_u64::<BigEndian>()?;

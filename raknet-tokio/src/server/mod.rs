@@ -1,5 +1,6 @@
 pub mod msg;
 mod state;
+pub mod error;
 
 use crate::server::msg::RakServerMsg;
 use crate::server::state::RakServerState;
@@ -15,6 +16,7 @@ use std::time::SystemTime;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tracing::debug;
+use crate::server::error::RakServerError;
 
 pub struct RakServer {
     state: RakServerState,
@@ -43,7 +45,7 @@ impl RakServer {
                 config.message = buf;
             }
             RakServerState::Running(Running { msg_tx, .. }) => {
-                msg_tx.send(RakServerMsg::SetMessage(buf)).unwrap();
+                let _ = msg_tx.send(RakServerMsg::SetMessage(buf));
             }
             _ => {}
         }
@@ -55,31 +57,33 @@ impl RakServer {
                 config.max_connections = val;
             }
             RakServerState::Running(Running { msg_tx, .. }) => {
-                msg_tx.send(RakServerMsg::SetMaxConnections(val)).unwrap();
+                let _ = msg_tx.send(RakServerMsg::SetMaxConnections(val));
             }
             _ => {}
         }
     }
 
-    pub fn start(&mut self) {
+    pub async fn start(&mut self) -> Result<(), RakServerError> {
         let RakServerState::Initialized(Initialized { config, addr }) = &self.state else {
-            return;
+            return Ok(());
         };
 
         let (session_tx, session_rx) = unbounded_channel();
         let (msg_tx, msg_rx) = unbounded_channel();
 
+        let socket = UdpSocket::bind(addr).await?;
+
         let handle = tokio::spawn({
             let config = config.clone();
             let addr = *addr;
+            let socket = socket;
+            let mut msg_rx = msg_rx;
 
             async move {
-                let mut msg_rx = msg_rx;
-
                 let mut sessions: HashMap<RakSessionId, UnboundedSender<RakSessionInput>> =
                     HashMap::new();
 
-                let socket = UdpSocket::bind(addr).await.unwrap();
+                
                 let mut buf = vec![0u8; config.max_mtu_size as usize];
                 let mut server = RakServerIntl::new(config, addr);
 
@@ -90,18 +94,21 @@ impl RakServer {
                         Ok((len, addr)) = socket.recv_from(&mut buf) => {
                             let now = SystemTime::now();
 
-                            server.handle(RakServerInput::Datagram(buf[..len].into(), addr, now)).unwrap();
+                            match server.handle(RakServerInput::Datagram(buf[..len].into(), addr, now)) {
+                                Ok(_) => {},
+                                Err(e) => debug!("server failed to handle inbound datagram: {e}")
+                            }
                         }
                         Some((buf, addr)) = dgram_rx.recv() => {
-                            socket.send_to(buf.as_ref(), addr).await.unwrap();
+                            let _ = socket.send_to(buf.as_ref(), addr).await;
                         }
                         Some(msg) = msg_rx.recv() => {
                             match msg {
                                 RakServerMsg::SetMessage(msg) => {
-                                    server.handle(RakServerInput::SetMessage(msg)).unwrap();
+                                    let _ = server.handle(RakServerInput::SetMessage(msg));
                                 },
                                 RakServerMsg::SetMaxConnections(n) => {
-                                    server.handle(RakServerInput::SetMaxConnections(n)).unwrap();
+                                    let _ = server.handle(RakServerInput::SetMaxConnections(n));
                                 }
                             }
                         }
@@ -110,13 +117,13 @@ impl RakServer {
                     while let Some(msg) = server.poll() {
                         match msg {
                             RakServerOutput::SocketDatagram(buf, addr) => {
-                                socket.send_to(&buf, addr).await.unwrap();
+                                let _ = socket.send_to(&buf, addr).await;
                             }
                             RakServerOutput::SessionDatagram(buf, id) => {
                                 if let Some(session) = sessions.get_mut(&id) {
                                     let now = SystemTime::now();
 
-                                    session.send(RakSessionInput::Datagram(buf, now)).unwrap();
+                                    let _ = session.send(RakSessionInput::Datagram(buf, now));
                                 }
                             }
                             RakServerOutput::SessionConnected(session) => {
@@ -128,7 +135,7 @@ impl RakServer {
 
                                 sessions.insert(id, tx);
 
-                                session_tx.send(session).unwrap();
+                                let _ = session_tx.send(session);
                             }
                         }
                     }
@@ -141,6 +148,7 @@ impl RakServer {
             session_rx,
             msg_tx,
         });
+        Ok(())
     }
 
     pub fn stop(&mut self) {
@@ -184,7 +192,7 @@ mod tests {
             config.message = Box::new(*b"MCPE;Chorus;0;1.0.0;0;-1;123456789;Chorus;Survival");
         });
 
-        server.start();
+        let _ = server.start().await;
 
         let mut sessions = Vec::new();
 

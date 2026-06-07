@@ -1,7 +1,8 @@
 use crate::protocol::codec::RakCodec;
+use crate::protocol::error::RakCodecError;
 use crate::util::packet_id::CONNECTION_REQUEST;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use std::io::{Error, ErrorKind, Read, Write};
+use std::io::{Read, Write};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConnectionRequest {
@@ -11,7 +12,7 @@ pub struct ConnectionRequest {
 }
 
 impl RakCodec for ConnectionRequest {
-    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), Error> {
+    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), RakCodecError> {
         writer.write_u8(CONNECTION_REQUEST)?;
         writer.write_u64::<BigEndian>(self.client_guid)?;
         writer.write_u64::<BigEndian>(self.client_timestamp)?;
@@ -20,13 +21,10 @@ impl RakCodec for ConnectionRequest {
         Ok(())
     }
 
-    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, Error> {
+    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, RakCodecError> {
         let id = reader.read_u8()?;
         if id != CONNECTION_REQUEST {
-            return Err(Error::new(
-                ErrorKind::InvalidData,
-                "not a ConnectionRequest",
-            ));
+            return Err(RakCodecError::UnexpectedPacketID(CONNECTION_REQUEST, id));
         }
 
         let client_guid = reader.read_u64::<BigEndian>()?;

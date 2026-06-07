@@ -1,7 +1,8 @@
 use crate::protocol::codec::RakCodec;
+use crate::protocol::error::RakCodecError;
 use crate::util::packet_id::NEW_INCOMING_CONNECTION;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use std::io::{Cursor, Error, ErrorKind, Read, Write};
+use std::io::{Cursor, Read, Write};
 use std::net::SocketAddr;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -13,7 +14,7 @@ pub struct NewIncomingConnection {
 }
 
 impl RakCodec for NewIncomingConnection {
-    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), Error> {
+    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), RakCodecError> {
         writer.write_u8(NEW_INCOMING_CONNECTION)?;
         SocketAddr::serialize(&self.server_address, writer)?;
         for addr in &self.internal_addresses {
@@ -25,12 +26,12 @@ impl RakCodec for NewIncomingConnection {
         Ok(())
     }
 
-    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, Error> {
+    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, RakCodecError> {
         let id = reader.read_u8()?;
         if id != NEW_INCOMING_CONNECTION {
-            return Err(Error::new(
-                ErrorKind::InvalidData,
-                "not a NewIncomingConnection",
+            return Err(RakCodecError::UnexpectedPacketID(
+                NEW_INCOMING_CONNECTION,
+                id,
             ));
         }
 

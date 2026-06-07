@@ -1,8 +1,9 @@
 use crate::protocol::codec::RakCodec;
+use crate::protocol::error::RakCodecError;
 use crate::util::constants::MAGIC;
 use crate::util::packet_id::OPEN_CONNECTION_REQUEST_2;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use std::io::{Cursor, Error, ErrorKind, Read, Write};
+use std::io::{Cursor, Read, Write};
 use std::net::SocketAddr;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -14,7 +15,7 @@ pub struct OpenConnectionRequest2 {
 }
 
 impl RakCodec for OpenConnectionRequest2 {
-    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), Error> {
+    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), RakCodecError> {
         writer.write_u8(OPEN_CONNECTION_REQUEST_2)?;
         writer.write_all(&MAGIC)?;
         if let Some(cookie) = self.cookie {
@@ -28,7 +29,7 @@ impl RakCodec for OpenConnectionRequest2 {
         Ok(())
     }
 
-    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, Error> {
+    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, RakCodecError> {
         // Security:
         // - Enabled = 5
         // - Disabled = 0
@@ -48,9 +49,9 @@ impl RakCodec for OpenConnectionRequest2 {
 
         let id = reader.read_u8()?;
         if id != OPEN_CONNECTION_REQUEST_2 {
-            return Err(Error::new(
-                ErrorKind::InvalidData,
-                "not an OpenConnectionRequest2",
+            return Err(RakCodecError::UnexpectedPacketID(
+                OPEN_CONNECTION_REQUEST_2,
+                id,
             ));
         }
 
@@ -63,7 +64,7 @@ impl RakCodec for OpenConnectionRequest2 {
         reader.read_exact(&mut magic)?;
 
         if magic != MAGIC {
-            return Err(Error::new(ErrorKind::InvalidData, "invalid magic"));
+            return Err(RakCodecError::UnexpectedMagic);
         }
 
         let cookie = match reader.get_ref().len() - reader.position() as usize {

@@ -1,8 +1,9 @@
 use crate::protocol::codec::RakCodec;
+use crate::protocol::error::RakCodecError;
 use crate::protocol::types::frame::Frame;
 use crate::util::flags::{CONTINUOUS_SEND, NEEDS_B_AND_AS, PAIR, VALID};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use std::io::{Error, ErrorKind, Read, Write};
+use std::io::{ErrorKind, Read, Write};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FrameSet {
@@ -32,7 +33,7 @@ impl FrameSet {
 }
 
 impl RakCodec for FrameSet {
-    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), Error> {
+    fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), RakCodecError> {
         let mut flags = VALID;
         if self.continuous_send {
             flags |= CONTINUOUS_SEND;
@@ -53,10 +54,10 @@ impl RakCodec for FrameSet {
         Ok(())
     }
 
-    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, Error> {
+    fn deserialize<R: Read>(reader: &mut R) -> Result<Self, RakCodecError> {
         let flags = reader.read_u8()?;
         if flags & VALID != VALID {
-            return Err(Error::new(ErrorKind::InvalidData, "not a FrameSet"));
+            return Err(RakCodecError::UnexpectedHeader(flags));
         }
 
         let sequence = reader.read_u24::<LittleEndian>()?;
@@ -65,12 +66,14 @@ impl RakCodec for FrameSet {
         loop {
             match Frame::deserialize(reader) {
                 Ok(frame) => frames.push(frame),
-                Err(e) => {
-                    if e.kind() == ErrorKind::UnexpectedEof {
+                Err(RakCodecError::IOError(e)) => {
+                    if matches!(e.kind(), ErrorKind::UnexpectedEof) {
                         break;
+                    } else {
+                        return Err(RakCodecError::IOError(e));
                     }
-                    return Err(e);
                 }
+                Err(e) => return Err(e),
             }
         }
 
