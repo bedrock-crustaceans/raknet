@@ -12,16 +12,19 @@ use tracing::debug;
 pub struct RakSession {
     pub(crate) msg_tx: UnboundedSender<RakSessionMsg>,
     pub(crate) buf_rx: UnboundedReceiver<Box<[u8]>>,
+    pub(crate) addr: SocketAddr,
 }
 
 impl RakSession {
-    pub fn spawn(
+    pub(crate) fn spawn(
         session: RakSessionIntl,
         datagram_tx: UnboundedSender<(Box<[u8]>, SocketAddr)>,
     ) -> (Self, UnboundedSender<RakSessionInput>) {
         let (msg_tx, msg_rx) = unbounded_channel();
         let (buf_tx, buf_rx) = unbounded_channel();
         let (tx, rx) = unbounded_channel();
+
+        let addr = session.addr;
 
         tokio::spawn(async move {
             let mut msg_rx = msg_rx;
@@ -82,7 +85,14 @@ impl RakSession {
             }
         });
 
-        (Self { msg_tx, buf_rx }, tx)
+        (
+            Self {
+                msg_tx,
+                buf_rx,
+                addr,
+            },
+            tx,
+        )
     }
 
     pub async fn recv<T>(&mut self) -> Option<T>
@@ -118,5 +128,9 @@ impl RakSession {
         let (tx, rx) = oneshot::channel();
         let _ = self.msg_tx.send(RakSessionMsg::IsClosed(tx));
         rx.await.unwrap_or(true)
+    }
+
+    pub fn get_addr(&self) -> SocketAddr {
+        self.addr
     }
 }
