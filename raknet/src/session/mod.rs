@@ -100,6 +100,11 @@ impl Sans for RakSession {
                 self.send_frame(Frame::new(reliability, buf), priority, now)
             }
             RakSessionInput::Timeout(now) => self.handle_timeout(now),
+            RakSessionInput::Disconnect(now) => {
+                let connected = self.state == RakSessionState::Connected;
+
+                self.disconnect_internal(connected, connected, now);
+            }
         }
         Ok(())
     }
@@ -684,13 +689,6 @@ impl RakSession {
         debug!("session closed by {}", self.addr);
 
         self.disconnect_internal(false, true, now);
-    }
-
-    // TODO: should be a write
-    pub fn disconnect(&mut self, now: SystemTime) {
-        let connected = self.state == RakSessionState::Connected;
-
-        self.disconnect_internal(connected, connected, now);
     }
 
     fn disconnect_internal(&mut self, send: bool, connected: bool, now: SystemTime) {

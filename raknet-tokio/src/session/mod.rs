@@ -41,8 +41,11 @@ impl RakSession {
                                 session.handle(RakSessionInput::Send(buf, reliability, priority, now)).unwrap();
                             }
                             RakSessionMsg::Close(sender) => {
+                                let now = SystemTime::now();
+
+                                session.handle(RakSessionInput::Disconnect(now)).unwrap();
+
                                 sender.send(()).unwrap();
-                                return;
                             }
                             _ => {},
                         }
