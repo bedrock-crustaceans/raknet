@@ -468,7 +468,7 @@ impl RakSession {
                 reliable_index: match reliability.is_reliable() {
                     true => {
                         let val = self.outbound_rel;
-                        self.outbound_seq += 1;
+                        self.outbound_rel += 1;
                         val
                     }
                     false => 0,
@@ -644,8 +644,6 @@ impl RakSession {
     }
 
     fn handle_split_frame(&mut self, frame: Frame, now: SystemTime) -> Result<(), RakSessionError> {
-        debug!("handling split frame");
-        
         let mut frame = frame;
 
         let fragments = self.inbound_spl_queue.entry(frame.split_id).or_default();

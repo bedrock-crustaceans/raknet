@@ -77,7 +77,7 @@ impl RakSession {
                         }
                         RakSessionOutput::Datagram(buf, addr) => {
                             if let Some(&b) = buf.first() {
-                                debug!("sending packet {:#04X} to {}", b, addr);
+                                debug!("sending datagram {:#04X} to {}", b, addr);
                             };
                             
                             let _ = datagram_tx.send((buf, addr));
