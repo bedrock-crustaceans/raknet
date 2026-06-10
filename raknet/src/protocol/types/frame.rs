@@ -79,34 +79,30 @@ impl RakCodec for Frame {
 
         let length = (reader.read_u16::<BigEndian>()? as usize + 7) >> 3;
 
-        let reliable_index: u32 = if reliability.is_reliable() {
-            reader.read_u24::<LittleEndian>()?
-        } else {
-            0
+        let mut reliable_index = 0;
+        if reliability.is_reliable() {
+            reliable_index = reader.read_u24::<LittleEndian>()?
         };
 
-        let sequence_index: u32 = if reliability.is_sequenced() {
-            reader.read_u24::<LittleEndian>()?
-        } else {
-            0
+        let mut sequence_index = 0;
+        if reliability.is_sequenced() {
+            sequence_index = reader.read_u24::<LittleEndian>()?
         };
 
-        let (order_index, order_channel) = if reliability.is_ordered() || reliability.is_sequenced()
-        {
-            let order_index = reader.read_u24::<LittleEndian>()?;
-            let order_channel = reader.read_u8()?;
-            (order_index, order_channel)
-        } else {
-            (0, 0)
+        let mut order_index = 0;
+        let mut order_channel = 0;
+        if reliability.is_ordered() || reliability.is_sequenced() {
+            order_index = reader.read_u24::<LittleEndian>()?;
+            order_channel = reader.read_u8()?;
         };
-
-        let (split_size, split_id, split_index) = if header & SPLIT != 0 {
-            let split_size = reader.read_u32::<BigEndian>()?;
-            let split_id = reader.read_u16::<BigEndian>()?;
-            let split_index = reader.read_u32::<BigEndian>()?;
-            (split_size, split_id, split_index)
-        } else {
-            (0, 0, 0)
+        
+        let mut split_size = 0;
+        let mut split_id = 0;
+        let mut split_index = 0;
+        if header & SPLIT != 0 {
+            split_size = reader.read_u32::<BigEndian>()?;
+            split_id = reader.read_u16::<BigEndian>()?;
+            split_index = reader.read_u32::<BigEndian>()?;
         };
 
         let mut payload = vec![0; length].into_boxed_slice();

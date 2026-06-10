@@ -357,8 +357,6 @@ impl RakSession {
             });
             self.outbound_seq += 1;
         }
-        
-        trace!("made {} frame sets", sets.len());
 
         sets
     }
@@ -579,8 +577,6 @@ impl RakSession {
     }
 
     fn handle_full_frame(&mut self, frame: Frame, now: SystemTime) -> Result<(), RakSessionError> {
-        debug!("handling full frame");
-        
         if frame.reliability.is_sequenced() {
             if frame.sequence_index < self.inbound_seq_idx[frame.order_channel as usize]
                 || frame.order_index < self.inbound_ord_idx[frame.order_channel as usize]
