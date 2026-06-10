@@ -30,7 +30,7 @@ use std::io::Cursor;
 use std::mem::{replace, take};
 use std::net::SocketAddr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tracing::debug;
+use tracing::{debug, trace};
 
 #[derive(Default, Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub struct RakSessionId(pub u64);
@@ -86,6 +86,8 @@ impl Sans for RakSession {
 
         match msg {
             RakSessionInput::Datagram(buf, now) => {
+                trace!("handling datagram");
+                
                 self.last_recv = now;
 
                 let Some(&b) = buf.first() else {
@@ -105,10 +107,20 @@ impl Sans for RakSession {
                 }
             }
             RakSessionInput::Send(buf, reliability, priority, now) => {
+                trace!("handling send");
+                
                 self.send_frame(Frame::new(reliability, buf), priority, now)?
             }
-            RakSessionInput::Timeout(now) => self.handle_timeout(now)?,
-            RakSessionInput::Disconnect(now) => self.disconnect(true, now)?,
+            RakSessionInput::Timeout(now) => {
+                trace!("handling timeout");
+                
+                self.handle_timeout(now)? 
+            },
+            RakSessionInput::Disconnect(now) => {
+                trace!("handling disconnect");
+                
+                self.disconnect(true, now)? 
+            },
         }
         Ok(())
     }
