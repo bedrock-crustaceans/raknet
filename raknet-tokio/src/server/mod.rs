@@ -1,7 +1,8 @@
+pub mod error;
 pub mod msg;
 mod state;
-pub mod error;
 
+use crate::server::error::RakServerError;
 use crate::server::msg::RakServerMsg;
 use crate::server::state::RakServerState;
 use crate::session::RakSession;
@@ -16,7 +17,6 @@ use std::time::SystemTime;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tracing::debug;
-use crate::server::error::RakServerError;
 
 pub struct RakServer {
     state: RakServerState,
@@ -83,7 +83,6 @@ impl RakServer {
                 let mut sessions: HashMap<RakSessionId, UnboundedSender<RakSessionInput>> =
                     HashMap::new();
 
-                
                 let mut buf = vec![0u8; config.max_mtu_size as usize];
                 let mut server = RakServerIntl::new(config, addr);
 

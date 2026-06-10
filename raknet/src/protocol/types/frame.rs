@@ -95,7 +95,7 @@ impl RakCodec for Frame {
             order_index = reader.read_u24::<LittleEndian>()?;
             order_channel = reader.read_u8()?;
         };
-        
+
         let mut split_size = 0;
         let mut split_id = 0;
         let mut split_index = 0;

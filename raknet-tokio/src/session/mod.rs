@@ -7,7 +7,6 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::sync::oneshot;
 use tokio::time::{Instant, sleep};
-use tracing::{debug, error};
 
 pub struct RakSession {
     pub(crate) msg_tx: UnboundedSender<RakSessionMsg>,
@@ -57,16 +56,12 @@ impl RakSession {
                         }
                     }
                     Some(recv) = rx.recv() => {
-                        if let Err(e) = session.handle(recv) {
-                            error!("session err: {:?}", e);
-                        }
+                        let _ = session.handle(recv);
                     }
                     _ = &mut timeout => {
                         let now = SystemTime::now();
 
-                        if let Err(e) = session.handle(RakSessionInput::Timeout(now)) {
-                            error!("session err: {:?}", e);
-                        }
+                        let _ = session.handle(RakSessionInput::Timeout(now));
                     }
                 }
 
@@ -76,17 +71,12 @@ impl RakSession {
                             timeout.as_mut().reset(Instant::now() + when)
                         }
                         RakSessionOutput::Datagram(buf, addr) => {
-                            if let Some(&b) = buf.first() {
-                                debug!("sending datagram {:#04X} to {}", b, addr);
-                            };
-                            
                             let _ = datagram_tx.send((buf, addr));
                         }
                         RakSessionOutput::Packet(buf) => {
-                            let Some(&b) = buf.first() else {
+                            if buf.is_empty() {
                                 continue;
-                            };
-                            debug!("received packet {:#04X} from {}", b, session.addr);
+                            }
 
                             let _ = buf_tx.send(buf);
                         }
@@ -113,20 +103,29 @@ impl RakSession {
         self.buf_rx.recv().await.map(Into::into)
     }
 
-    pub async fn send<T>(&self, buf: T, reliability: RakReliability, priority: RakPriority) -> Result<(), RakSessionError>
+    pub async fn send<T>(
+        &self,
+        buf: T,
+        reliability: RakReliability,
+        priority: RakPriority,
+    ) -> Result<(), RakSessionError>
     where
         T: Into<Box<[u8]>>,
     {
         let (tx, rx) = oneshot::channel();
-        
-        self.msg_tx.send(RakSessionMsg::Send(buf.into(), reliability, priority, tx)).map_err(|_| RakSessionError::Closed)?;
+
+        self.msg_tx
+            .send(RakSessionMsg::Send(buf.into(), reliability, priority, tx))
+            .map_err(|_| RakSessionError::Closed)?;
         rx.await.map_err(|_| RakSessionError::Closed)?
     }
 
     pub async fn close(&self) -> Result<(), RakSessionError> {
         let (tx, rx) = oneshot::channel();
-        
-        self.msg_tx.send(RakSessionMsg::Close(tx)).map_err(|_| RakSessionError::Closed)?;
+
+        self.msg_tx
+            .send(RakSessionMsg::Close(tx))
+            .map_err(|_| RakSessionError::Closed)?;
         rx.await.map_err(|_| RakSessionError::Closed)?
     }
 

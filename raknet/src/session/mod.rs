@@ -30,7 +30,7 @@ use std::io::Cursor;
 use std::mem::{replace, take};
 use std::net::SocketAddr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tracing::{debug, trace};
+use tracing::debug;
 
 #[derive(Default, Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub struct RakSessionId(pub u64);
@@ -104,7 +104,9 @@ impl Sans for RakSession {
                     _ => self.handle_frame_set(&mut cursor, now)?,
                 }
             }
-            RakSessionInput::Send(buf, reliability, priority, now) => self.send_frame(Frame::new(reliability, buf), priority, now)?,
+            RakSessionInput::Send(buf, reliability, priority, now) => {
+                self.send_frame(Frame::new(reliability, buf), priority, now)?
+            }
             RakSessionInput::Timeout(now) => self.handle_timeout(now)?,
             RakSessionInput::Disconnect(now) => self.disconnect(true, now)?,
         }
@@ -169,7 +171,7 @@ impl RakSession {
     pub fn get_addr(self) -> SocketAddr {
         self.addr
     }
-    
+
     pub fn get_state(&self) -> RakSessionState {
         self.state
     }
@@ -320,6 +322,7 @@ impl RakSession {
             let frame_size = frame.size_hint();
 
             if frame_size > max {
+                // TODO: make this an error instead of panic
                 panic!(
                     "Frame too large for FrameSet, size: {}, max size: {}",
                     frame_size, max
@@ -499,7 +502,7 @@ impl RakSession {
                     self.send_frame_set(set, true, now)?;
                 }
             }
-            _ => self.outbound_queue.extend(frames)
+            _ => self.outbound_queue.extend(frames),
         }
         Ok(())
     }

@@ -8,14 +8,12 @@ mod util;
 pub mod prelude {
     pub use crate::sans::Sans;
     pub use crate::server::{
-        RakServer, config::RakServerConfig, input::RakServerInput, output::RakServerOutput,
-        error::RakServerError,
+        RakServer, config::RakServerConfig, error::RakServerError, input::RakServerInput,
+        output::RakServerOutput,
     };
     pub use crate::session::{
-        RakSession, RakSessionId, config::RakSessionConfig, input::RakSessionInput,
-        output::RakSessionOutput,
-        error::RakSessionError,
-        state::RakSessionState,
+        RakSession, RakSessionId, config::RakSessionConfig, error::RakSessionError,
+        input::RakSessionInput, output::RakSessionOutput, state::RakSessionState,
     };
     pub use crate::types::*;
 }
