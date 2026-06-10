@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::sync::oneshot;
 use tokio::time::{Instant, sleep};
-use tracing::debug;
+use tracing::{debug, error};
 
 pub struct RakSession {
     pub(crate) msg_tx: UnboundedSender<RakSessionMsg>,
@@ -57,12 +57,16 @@ impl RakSession {
                         }
                     }
                     Some(recv) = rx.recv() => {
-                        let _ = session.handle(recv);
+                        if let Err(e) = session.handle(recv) {
+                            error!("session err: {:?}", e);
+                        }
                     }
                     _ = &mut timeout => {
                         let now = SystemTime::now();
 
-                        let _ = session.handle(RakSessionInput::Timeout(now));
+                        if let Err(e) = session.handle(RakSessionInput::Timeout(now)) {
+                            error!("session err: {:?}", e);
+                        }
                     }
                 }
 

@@ -266,7 +266,7 @@ impl RakSession {
     fn send_stale(&mut self, now: SystemTime) -> Result<(), RakSessionError> {
         let mut pending = Vec::new();
 
-        let mut bandwidth = { self.congestion_controller.retransmission_bandwidth() };
+        let mut bandwidth = self.congestion_controller.retransmission_bandwidth();
 
         while let Some(&(Reverse(sent), seq)) = self.outbound_resend.peek() {
             if sent > now {
@@ -297,7 +297,7 @@ impl RakSession {
     }
 
     fn send_queue(&mut self, now: SystemTime) -> Result<(), RakSessionError> {
-        let mut bandwidth = { self.congestion_controller.transmission_bandwidth() };
+        let mut bandwidth = self.congestion_controller.transmission_bandwidth();
 
         let frames = {
             let mut frames = Vec::new();
@@ -371,6 +371,8 @@ impl RakSession {
             });
             self.outbound_seq += 1;
         }
+        
+        trace!("made {} frame sets", sets.len());
 
         sets
     }
@@ -513,9 +515,7 @@ impl RakSession {
                     self.send_frame_set(set, true, now)?;
                 }
             }
-            _ => {
-                self.outbound_queue.extend(frames);
-            }
+            _ => self.outbound_queue.extend(frames)
         }
         Ok(())
     }

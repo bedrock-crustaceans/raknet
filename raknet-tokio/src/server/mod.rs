@@ -124,6 +124,8 @@ impl RakServer {
                                     let now = SystemTime::now();
 
                                     let _ = session.send(RakSessionInput::Datagram(buf, now));
+                                } else {
+                                    debug!("no session found with id {id:?}");
                                 }
                             }
                             RakServerOutput::SessionConnected(session) => {
