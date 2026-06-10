@@ -96,11 +96,15 @@ impl RakSession {
         )
     }
 
-    pub async fn recv<T>(&mut self) -> Option<T>
+    pub async fn recv<T>(&mut self) -> Result<T, RakSessionError>
     where
         Box<[u8]>: Into<T>,
     {
-        self.buf_rx.recv().await.map(Into::into)
+        self.buf_rx
+            .recv()
+            .await
+            .map(Into::into)
+            .ok_or(RakSessionError::Closed)
     }
 
     pub async fn send<T>(

@@ -163,12 +163,12 @@ impl RakServer {
         self.state = RakServerState::Shutdown;
     }
 
-    pub async fn accept(&mut self) -> Option<RakSession> {
+    pub async fn accept(&mut self) -> Result<RakSession, RakServerError> {
         let RakServerState::Running(Running { session_rx, .. }) = &mut self.state else {
-            return None;
+            return Err(RakServerError::Closed);
         };
 
-        session_rx.recv().await
+        session_rx.recv().await.ok_or(RakServerError::Closed)
     }
 }
 
@@ -199,7 +199,7 @@ mod tests {
 
         loop {
             tokio::select! {
-                Some(session) = server.accept() => {
+                Ok(session) = server.accept() => {
                     sessions.push(session);
                     debug!("received session")
                 }
