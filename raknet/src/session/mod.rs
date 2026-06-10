@@ -86,8 +86,6 @@ impl Sans for RakSession {
 
         match msg {
             RakSessionInput::Datagram(buf, now) => {
-                trace!("handling datagram");
-                
                 self.last_recv = now;
 
                 let Some(&b) = buf.first() else {
@@ -97,7 +95,7 @@ impl Sans for RakSession {
                 let mut cursor = Cursor::new(buf.as_ref());
                 match b {
                     _ if b & flags::VALID == 0 => debug!(
-                        "received unknown online packet 0x{:02X} from {}",
+                        "received unknown online packet {:#04X} from {}",
                         b, self.addr
                     ),
                     _ if b & (flags::ACK | flags::NACK) != 0 => {
@@ -106,21 +104,9 @@ impl Sans for RakSession {
                     _ => self.handle_frame_set(&mut cursor, now)?,
                 }
             }
-            RakSessionInput::Send(buf, reliability, priority, now) => {
-                trace!("handling send");
-                
-                self.send_frame(Frame::new(reliability, buf), priority, now)?
-            }
-            RakSessionInput::Timeout(now) => {
-                trace!("handling timeout");
-                
-                self.handle_timeout(now)? 
-            },
-            RakSessionInput::Disconnect(now) => {
-                trace!("handling disconnect");
-                
-                self.disconnect(true, now)? 
-            },
+            RakSessionInput::Send(buf, reliability, priority, now) => self.send_frame(Frame::new(reliability, buf), priority, now)?,
+            RakSessionInput::Timeout(now) => self.handle_timeout(now)?,
+            RakSessionInput::Disconnect(now) => self.disconnect(true, now)?,
         }
         Ok(())
     }
@@ -593,6 +579,8 @@ impl RakSession {
     }
 
     fn handle_full_frame(&mut self, frame: Frame, now: SystemTime) -> Result<(), RakSessionError> {
+        debug!("handling full frame");
+        
         if frame.reliability.is_sequenced() {
             if frame.sequence_index < self.inbound_seq_idx[frame.order_channel as usize]
                 || frame.order_index < self.inbound_ord_idx[frame.order_channel as usize]
@@ -660,6 +648,8 @@ impl RakSession {
     }
 
     fn handle_split_frame(&mut self, frame: Frame, now: SystemTime) -> Result<(), RakSessionError> {
+        debug!("handling split frame");
+        
         let mut frame = frame;
 
         let fragments = self.inbound_spl_queue.entry(frame.split_id).or_default();
