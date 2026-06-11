@@ -83,7 +83,7 @@ impl RakServer {
                 let mut sessions: HashMap<RakSessionId, UnboundedSender<RakSessionInput>> =
                     HashMap::new();
 
-                let mut buf = vec![0u8; config.max_mtu_size as usize];
+                let mut buf = vec![0u8; config.max_mtu_size as usize].into_boxed_slice();
                 let mut server = RakServerIntl::new(config, addr);
 
                 let (dgram_tx, mut dgram_rx) = unbounded_channel::<(Box<[u8]>, SocketAddr)>();

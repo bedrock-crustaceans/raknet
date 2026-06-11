@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "bevy-raknet",
     "raknet",
     "raknet-tokio"
 ]
