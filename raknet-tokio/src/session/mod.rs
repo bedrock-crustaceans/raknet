@@ -30,8 +30,8 @@ impl RakSession {
             let mut rx = rx;
             let mut session = session;
 
-            let timeout = sleep(Duration::ZERO);
-            tokio::pin!(timeout);
+            let timer = sleep(Duration::ZERO);
+            tokio::pin!(timer);
 
             loop {
                 tokio::select! {
@@ -58,18 +58,16 @@ impl RakSession {
                     Some(recv) = rx.recv() => {
                         let _ = session.handle(recv);
                     }
-                    _ = &mut timeout => {
+                    _ = &mut timer => {
                         let now = SystemTime::now();
 
-                        let _ = session.handle(RakSessionInput::Timeout(now));
+                        let _ = session.handle(RakSessionInput::Update(now));
                     }
                 }
 
                 while let Some(out) = session.poll() {
                     match out {
-                        RakSessionOutput::Timeout(when) => {
-                            timeout.as_mut().reset(Instant::now() + when)
-                        }
+                        RakSessionOutput::Wait(when) => timer.as_mut().reset(Instant::now() + when),
                         RakSessionOutput::Datagram(buf, addr) => {
                             let _ = datagram_tx.send((buf, addr));
                         }

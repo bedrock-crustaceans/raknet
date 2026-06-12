@@ -7,5 +7,5 @@ pub enum RakSessionOutput {
     Packet(Box<[u8]>),
     Datagram(Box<[u8]>, SocketAddr),
     Disconnected(RakSessionId),
-    Timeout(Duration),
+    Wait(Duration),
 }

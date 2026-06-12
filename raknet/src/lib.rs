@@ -1,3 +1,4 @@
+mod client;
 mod protocol;
 mod sans;
 mod server;
