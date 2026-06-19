@@ -27,6 +27,7 @@ use crate::util::socket_addr::get_overhead;
 use crate::util::{constants, flags, packet_id};
 use config::RakServerConfig;
 use output::RakServerOutput;
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
 use std::io::Cursor;
 use std::net::SocketAddr;
@@ -120,7 +121,11 @@ impl RakServer {
         addr: SocketAddr,
         now: SystemTime,
     ) -> Result<(), RakServerError> {
-        if let Some(session) = self.session_temp.get_mut(&addr) {
+        if let Entry::Occupied(mut entry) = self.session_temp.entry(addr) {
+            let mut success = false;
+
+            let session = entry.get_mut();
+
             session.handle(RakSessionInput::Datagram(buf, now))?;
 
             while let Some(msg) = session.poll() {
@@ -132,11 +137,20 @@ impl RakServer {
                         if let Some(&b) = buf.first() {
                             let mut cursor = Cursor::new(buf.as_ref());
                             match b {
-                                packet_id::CONNECTION_REQUEST => {
-                                    return self.handle_connection_request(addr, &mut cursor, now);
-                                }
+                                packet_id::CONNECTION_REQUEST => Self::handle_connection_request(
+                                    session,
+                                    addr,
+                                    &mut cursor,
+                                    now,
+                                )?,
                                 packet_id::NEW_INCOMING_CONNECTION => {
-                                    return self.handle_new_incoming_connection(addr, &mut cursor);
+                                    Self::handle_new_incoming_connection(
+                                        session,
+                                        addr,
+                                        &mut cursor,
+                                    )?;
+
+                                    success = true;
                                 }
                                 _ => {
                                     debug!(
@@ -150,6 +164,13 @@ impl RakServer {
                     _ => {}
                 }
             }
+
+            if success {
+                let session = entry.remove();
+                self.output
+                    .push_back(RakServerOutput::SessionConnected(Box::new(session)));
+            }
+
             return Ok(());
         }
 
@@ -286,19 +307,12 @@ impl RakServer {
     }
 
     fn handle_connection_request(
-        &mut self,
+        session: &mut RakSession,
         addr: SocketAddr,
         buf: &mut Cursor<&[u8]>,
         now: SystemTime,
     ) -> Result<(), RakServerError> {
         let request = ConnectionRequest::deserialize(buf)?;
-
-        let Some(session) = self.session_temp.get_mut(&addr) else {
-            return Err(RakServerError::Unexpected(format!(
-                "unexpected ConnectionRequest from {}",
-                addr
-            )));
-        };
 
         debug!("handling connection request from {}", addr);
 
@@ -321,25 +335,16 @@ impl RakServer {
     }
 
     fn handle_new_incoming_connection(
-        &mut self,
+        session: &mut RakSession,
         addr: SocketAddr,
         buf: &mut Cursor<&[u8]>,
     ) -> Result<(), RakServerError> {
         let _ = NewIncomingConnection::deserialize(buf)?;
 
-        let Some(mut session) = self.session_temp.remove(&addr) else {
-            return Err(RakServerError::Unexpected(format!(
-                "unexpected NewIncomingConnection from {}",
-                addr
-            )));
-        };
-
         debug!("handling new incoming connection from {}", addr);
 
         session.state = RakSessionState::Connected;
 
-        self.output
-            .push_back(RakServerOutput::SessionConnected(Box::new(session)));
         Ok(())
     }
 }
