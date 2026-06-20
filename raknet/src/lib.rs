@@ -7,6 +7,10 @@ mod types;
 mod util;
 
 pub mod prelude {
+    pub use crate::client::{
+        RakClient, config::RakClientConfig, error::RakClientError, input::RakClientInput,
+        output::RakClientOutput,
+    };
     pub use crate::sans::Sans;
     pub use crate::server::{
         RakServer, config::RakServerConfig, error::RakServerError, input::RakServerInput,

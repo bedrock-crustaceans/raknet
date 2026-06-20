@@ -2,6 +2,7 @@ use crate::util::constants;
 use rand::random;
 use std::time::Duration;
 
+#[derive(Clone, Debug)]
 pub struct RakClientConfig {
     pub guid: u64,
     pub protocol: u8,
