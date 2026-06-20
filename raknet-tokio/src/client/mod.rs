@@ -1,3 +1,1 @@
-pub struct RakClient {
-    
-}
+pub struct RakClient {}

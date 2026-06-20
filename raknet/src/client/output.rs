@@ -8,5 +8,5 @@ pub enum RakClientOutput {
     SessionDatagram(Box<[u8]>),
     SessionConnected(Box<RakSession>),
     Wait(Duration),
-    Pong(SocketAddr, Box<[u8]>, SystemTime)
+    Pong(SocketAddr, Box<[u8]>, SystemTime),
 }

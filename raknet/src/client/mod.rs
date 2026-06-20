@@ -20,6 +20,8 @@ use crate::protocol::packets::open_connection_reply_1::OpenConnectionReply1;
 use crate::protocol::packets::open_connection_reply_2::OpenConnectionReply2;
 use crate::protocol::packets::open_connection_request_1::OpenConnectionRequest1;
 use crate::protocol::packets::open_connection_request_2::OpenConnectionRequest2;
+use crate::protocol::packets::unconnected_ping::UnconnectedPing;
+use crate::protocol::packets::unconnected_pong::UnconnectedPong;
 use crate::sans::Sans;
 use crate::session::RakSessionId;
 use crate::util::packet_id;
@@ -28,8 +30,6 @@ use std::io::Cursor;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::debug;
-use crate::protocol::packets::unconnected_ping::UnconnectedPing;
-use crate::protocol::packets::unconnected_pong::UnconnectedPong;
 
 #[derive(Clone, Debug)]
 pub struct RakClient {
@@ -54,30 +54,37 @@ impl Sans for RakClient {
     fn handle(&mut self, msg: Self::Input) -> Result<(), Self::Error> {
         match msg {
             RakClientInput::Ping(addr, now) => {
-                if !matches!(self.state, RakClientState::Unconnected) { return Ok(()) }
-                
+                if !matches!(self.state, RakClientState::Unconnected) {
+                    return Ok(());
+                }
+
                 let ping = UnconnectedPing {
                     timestamp: now.duration_since(UNIX_EPOCH)?.as_millis() as u64,
-                    client: self.config.guid
+                    client: self.config.guid,
                 };
-                
+
                 let mut buf = Vec::with_capacity(ping.size_hint());
                 ping.serialize(&mut buf)?;
                 let buf = buf.into_boxed_slice();
-                
-                self.output.push_back(RakClientOutput::SocketDatagram(buf, addr))
+
+                self.output
+                    .push_back(RakClientOutput::SocketDatagram(buf, addr))
             }
             RakClientInput::Connect(remote, now) => {
-                if !matches!(self.state, RakClientState::Unconnected) { return Ok(()) }
-                
+                if !matches!(self.state, RakClientState::Unconnected) {
+                    return Ok(());
+                }
+
                 self.state = RakClientState::Handshake1(remote);
-                
+
                 self.handle_timeout(now)?;
             }
             RakClientInput::Datagram(buf, addr, now) => match self.state {
                 RakClientState::HandshakeCompleted(remote) => {
-                    if remote != addr { return Ok(()) }
-                    
+                    if remote != addr {
+                        return Ok(());
+                    }
+
                     let mut success: Option<bool> = None;
                     match self.session.as_mut() {
                         Some(session) => {
@@ -142,15 +149,18 @@ impl Sans for RakClient {
                         match b {
                             packet_id::UNCONNECTED_PONG => {
                                 let pong = UnconnectedPong::deserialize(&mut cursor)?;
-                                
-                                self.output.push_back(RakClientOutput::Pong(addr, pong.message, UNIX_EPOCH + Duration::from_millis(pong.timestamp)))
+
+                                self.output.push_back(RakClientOutput::Pong(
+                                    addr,
+                                    pong.message,
+                                    UNIX_EPOCH + Duration::from_millis(pong.timestamp),
+                                ))
                             }
                             _ => {}
                         }
                     }
                 }
-                RakClientState::Handshake1(remote) 
-                | RakClientState::Handshake2(remote) => {
+                RakClientState::Handshake1(remote) | RakClientState::Handshake2(remote) => {
                     if let Some(&b) = buf.first() {
                         let mut cursor = Cursor::new(buf.as_ref());
                         match b {
@@ -212,10 +222,12 @@ impl RakClient {
             output: VecDeque::new(),
         }
     }
-    
+
     fn handle_timeout(&mut self, now: SystemTime) -> Result<(), RakClientError> {
-        if matches!(self.state, RakClientState::Unconnected) { return Ok(()) }
-        
+        if matches!(self.state, RakClientState::Unconnected) {
+            return Ok(());
+        }
+
         if now >= self.last_attempt + self.config.conn_attempt_interval {
             if self.attempts < self.config.conn_attempt_max {
                 match self.state {
@@ -224,7 +236,9 @@ impl RakClient {
                         self.attempts += 1;
                         self.last_attempt = now;
                     }
-                    RakClientState::Handshake2(addr) => self.send_open_connection_request_2(addr)?,
+                    RakClientState::Handshake2(addr) => {
+                        self.send_open_connection_request_2(addr)?
+                    }
                     _ => {}
                 }
             } else {
@@ -318,13 +332,8 @@ impl RakClient {
             addr, self.mtu
         );
 
-        let mut session = RakSession::new(
-            RakSessionId(0),
-            addr,
-            self.config.guid,
-            self.mtu,
-            |_| {},
-        );
+        let mut session =
+            RakSession::new(RakSessionId(0), addr, self.config.guid, self.mtu, |_| {});
 
         let req = ConnectionRequest {
             security: false,
