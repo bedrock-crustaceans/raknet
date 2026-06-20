@@ -148,6 +148,17 @@ impl RakClient {
         Ok(())
     }
 
+    pub fn stop(&mut self) {
+        let RakClientState::Running { handle, .. } = &self.state else {
+            return;
+        };
+
+        // TODO
+        handle.abort();
+
+        self.state = RakClientState::Shutdown;
+    }
+
     pub async fn ping(&self, addr: SocketAddr) -> Result<(Box<[u8]>, Duration), RakClientError> {
         let RakClientState::Running { msg_tx, .. } = &self.state else {
             return Err(RakClientError::Closed);

@@ -11,4 +11,5 @@ pub enum RakClientState {
         handle: JoinHandle<()>,
         msg_tx: UnboundedSender<RakClientMsg>,
     },
+    Shutdown,
 }
