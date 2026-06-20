@@ -6,7 +6,8 @@ use std::time::Duration;
 pub struct RakClientConfig {
     pub guid: u64,
     pub protocol: u8,
-    pub mtu_sizes: Box<[u16]>,
+    pub min_mtu_size: u16,
+    pub max_mtu_size: u16,
     pub conn_attempt_timeout: Duration,
     pub conn_attempt_interval: Duration,
     pub conn_attempt_max: usize,
@@ -15,8 +16,8 @@ pub struct RakClientConfig {
 impl Default for RakClientConfig {
     fn default() -> Self {
         Self {
-            mtu_sizes: vec![constants::MIN_MTU_SIZE, 1200, constants::MAX_MTU_SIZE]
-                .into_boxed_slice(),
+            min_mtu_size: constants::MIN_MTU_SIZE,
+            max_mtu_size: constants::MAX_MTU_SIZE,
             protocol: constants::PROTOCOL,
             guid: random(),
             conn_attempt_timeout: constants::CONNECTION_ATTEMPT_TIMEOUT,

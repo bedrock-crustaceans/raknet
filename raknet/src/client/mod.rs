@@ -164,7 +164,7 @@ impl Sans for RakClient {
                     if remote != addr {
                         return Ok(());
                     }
-                    
+
                     if let Some(&b) = buf.first() {
                         let mut cursor = Cursor::new(buf.as_ref());
                         match b {
@@ -264,8 +264,11 @@ impl RakClient {
     }
 
     fn send_open_connection_request_1(&mut self, addr: SocketAddr) -> Result<(), RakClientError> {
-        let idx = self.attempts / (self.config.conn_attempt_max / self.config.mtu_sizes.len());
-        let mtu = self.config.mtu_sizes[idx];
+        let steps = self.config.conn_attempt_max.saturating_sub(1).max(1);
+        let mtu = self.config.min_mtu_size
+            + (((self.config.max_mtu_size - self.config.min_mtu_size) as usize
+                * self.attempts.min(steps))
+                / steps) as u16;
 
         let req = OpenConnectionRequest1 {
             protocol: self.config.protocol,
