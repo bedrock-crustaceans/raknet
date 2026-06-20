@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 pub const PROTOCOL: u8 = 11;
 
 pub const UDP_HEADER_SIZE: u16 = 8;
@@ -13,9 +15,9 @@ pub const TOTAL_PACKET_LIMIT: i32 = 100_000;
 pub const SESSION_TIMEOUT_MS: i32 = 10_000;
 pub const SESSION_STALE_MS: i32 = 5_000;
 
-pub const CONNECTION_ATTEMPT_TIMEOUT_MS: i32 = 10_000;
-pub const CONNECTION_ATTEMPT_INTERVAL_MS: i32 = 1_000;
-pub const CONNECTION_ATTEMPT_MAX: i32 = 10;
+pub const CONNECTION_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(10_000);
+pub const CONNECTION_ATTEMPT_INTERVAL: Duration = Duration::from_millis(1_000);
+pub const CONNECTION_ATTEMPT_MAX: usize = 10;
 
 pub const AUTOFLUSH: bool = true;
 pub const AUTOFLUSH_INTERVAL_MS: i32 = 10;

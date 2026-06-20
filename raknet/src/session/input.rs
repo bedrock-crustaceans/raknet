@@ -6,6 +6,6 @@ use std::time::SystemTime;
 pub enum RakSessionInput {
     Datagram(Box<[u8]>, SystemTime),
     Send(Box<[u8]>, RakReliability, RakPriority, SystemTime),
-    Timeout(SystemTime),
+    Update(SystemTime),
     Disconnect(SystemTime),
 }

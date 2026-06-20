@@ -8,10 +8,10 @@ use std::net::SocketAddr;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OpenConnectionReply2 {
-    guid: u64,
-    address: SocketAddr,
-    mtu: u16,
-    security: bool,
+    pub guid: u64,
+    pub address: SocketAddr,
+    pub mtu: u16,
+    pub security: bool,
 }
 
 impl OpenConnectionReply2 {

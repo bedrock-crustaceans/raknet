@@ -1,10 +1,13 @@
+mod client;
 mod server;
 mod session;
 
 pub mod prelude {
+    pub use super::client::RakClient;
     pub use super::server::{RakServer, error::RakServerError};
     pub use super::session::RakSession;
     pub use raknet::prelude::{
-        RakPriority, RakReliability, RakServerConfig, RakSessionConfig, RakSessionError,
+        RakClientConfig, RakClientError, RakPriority, RakReliability, RakServerConfig,
+        RakSessionConfig, RakSessionError,
     };
 }

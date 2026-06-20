@@ -107,7 +107,7 @@ impl Sans for RakSession {
             RakSessionInput::Send(buf, reliability, priority, now) => {
                 self.send_frame(Frame::new(reliability, buf), priority, now)?
             }
-            RakSessionInput::Timeout(now) => self.handle_timeout(now)?,
+            RakSessionInput::Update(now) => self.handle_timeout(now)?,
             RakSessionInput::Disconnect(now) => self.disconnect(true, now)?,
         }
         Ok(())
@@ -204,19 +204,18 @@ impl RakSession {
             self.last_ping = now;
         }
 
-        let Some(next) = [
+        let next = [
             self.last_tick + Duration::from_millis(10),
             self.last_ping + Duration::from_millis(2000),
             self.last_recv + Duration::from_millis(15000),
         ]
         .into_iter()
-        .min() else {
-            return Ok(());
-        };
+        .min()
+        .expect("unreachable");
 
         let duration = next.duration_since(now).unwrap_or(Duration::from_secs(0));
 
-        self.output.push_back(RakSessionOutput::Timeout(duration));
+        self.output.push_back(RakSessionOutput::Wait(duration));
         Ok(())
     }
 
