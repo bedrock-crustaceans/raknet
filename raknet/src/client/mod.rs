@@ -161,6 +161,10 @@ impl Sans for RakClient {
                     }
                 }
                 RakClientState::Handshake1(remote) | RakClientState::Handshake2(remote) => {
+                    if remote != addr {
+                        return Ok(());
+                    }
+                    
                     if let Some(&b) = buf.first() {
                         let mut cursor = Cursor::new(buf.as_ref());
                         match b {
