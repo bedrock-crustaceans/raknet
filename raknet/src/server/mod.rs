@@ -151,6 +151,7 @@ impl RakServer {
                                     )?;
 
                                     success = true;
+                                    break;
                                 }
                                 _ => {
                                     debug!(
