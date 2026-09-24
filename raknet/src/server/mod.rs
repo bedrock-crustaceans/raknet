@@ -124,6 +124,26 @@ impl RakServer {
         }
     }
 
+    /// Takes over a session from another `RakServer`, continuing its protocol state
+    /// rather than handshaking the peer again.
+    ///
+    /// The session is given a fresh local [`RakSessionId`], since the two servers count
+    /// ids independently, and is emitted as [`RakServerOutput::SessionConnected`] so it
+    /// arrives through the same `poll()` path as one this server handshaked itself.
+    pub fn adopt(&mut self, mut session: RakSession) {
+        let id = self.session_id;
+        self.session_id.0 += 1;
+
+        let addr = session.addr;
+        session.id = id;
+
+        self.session_map.insert(addr, id);
+        self.session_addr.insert(id, addr);
+
+        self.output
+            .push_back(RakServerOutput::SessionConnected(Box::new(session)));
+    }
+
     fn rate_limited(&mut self, addr: SocketAddr, now: SystemTime) -> bool {
         if now.duration_since(self.offline_window).unwrap_or_default() >= OFFLINE_RATE_LIMIT_WINDOW
         {
@@ -640,6 +660,88 @@ mod tests {
             outputs
                 .iter()
                 .any(|o| first_byte(o) == Some(packet_id::IP_RECENTLY_CONNECTED))
+        );
+    }
+
+    #[test]
+    fn adopted_session_continues_on_a_second_server() {
+        let peer_addr: SocketAddr = "127.0.0.1:40000".parse().unwrap();
+
+        // A session whose sequence state has advanced past its initial values.
+        let mut server_a = RakServer::new(
+            RakServerConfig::default(),
+            "127.0.0.1:19160".parse().unwrap(),
+        );
+        let id_on_a = RakSessionId(7);
+        server_a.session_map.insert(peer_addr, id_on_a);
+        server_a.session_addr.insert(id_on_a, peer_addr);
+
+        let mut session = RakSession::new(
+            id_on_a,
+            peer_addr,
+            0xDEAD_BEEF,
+            constants::MAX_MTU_SIZE,
+            |_| {},
+        );
+        let now = SystemTime::now();
+        session
+            .handle(RakSessionInput::Send(
+                b"hello".to_vec().into_boxed_slice(),
+                RakReliability::ReliableOrdered,
+                RakPriority::Immediate,
+                now,
+            ))
+            .unwrap();
+        let before_seq = session.outbound_rel;
+        assert!(
+            before_seq > 0,
+            "sending a reliable frame must advance the sequence counter"
+        );
+
+        // A separate instance whose id counter is already past server A's, so reusing
+        // the incoming id would collide.
+        let mut server_b = RakServer::new(
+            RakServerConfig::default(),
+            "127.0.0.1:19161".parse().unwrap(),
+        );
+        server_b.session_id = RakSessionId(id_on_a.0 + 100);
+
+        server_b.adopt(session);
+
+        let outputs = drain(&mut server_b);
+        let adopted = outputs.into_iter().find_map(|o| match o {
+            RakServerOutput::SessionConnected(session) => Some(*session),
+            _ => None,
+        });
+        let adopted = adopted.expect("adopt must emit SessionConnected");
+
+        assert_eq!(
+            adopted.outbound_rel, before_seq,
+            "sequence state must carry over unchanged"
+        );
+        assert_ne!(
+            adopted.id, id_on_a,
+            "a colliding id from another server must not be reused as-is"
+        );
+        assert_eq!(
+            *server_b.session_map.get(&peer_addr).unwrap(),
+            adopted.id,
+            "future datagrams from the peer must route to the adopted session's new id"
+        );
+
+        server_b
+            .handle(RakServerInput::Datagram(
+                b"\xffnoise".to_vec().into_boxed_slice(),
+                peer_addr,
+                now,
+            ))
+            .unwrap();
+        let routed = drain(&mut server_b);
+        assert!(
+            routed
+                .iter()
+                .any(|o| matches!(o, RakServerOutput::SessionDatagram(_, id) if *id == adopted.id)),
+            "a datagram from the adopted session's peer must be routed by its new id"
         );
     }
 

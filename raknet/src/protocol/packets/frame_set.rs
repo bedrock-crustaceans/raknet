@@ -5,7 +5,7 @@ use crate::util::flags::{CONTINUOUS_SEND, NEEDS_B_AND_AS, PAIR, VALID};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{ErrorKind, Read, Write};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, facet::Facet)]
 pub struct FrameSet {
     pub sequence: u32,
     pub frames: Vec<Frame>,

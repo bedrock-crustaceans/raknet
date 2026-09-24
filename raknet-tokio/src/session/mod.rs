@@ -55,6 +55,9 @@ impl RakSession {
                                 let closed = matches!(session.get_state(), RakSessionState::Disconnected);
                                 let _ = sender.send(closed);
                             },
+                            RakSessionMsg::Snapshot(sender) => {
+                                let _ = sender.send(session.snapshot());
+                            },
                         }
                     }
                     Some(recv) = rx.recv() => {
@@ -144,5 +147,17 @@ impl RakSession {
 
     pub fn get_addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// Captures this session's protocol state for [`crate::server::RakServer::adopt`].
+    ///
+    /// The live task keeps running - shutting it down once the target has taken over is
+    /// the caller's job, or the two copies diverge.
+    pub async fn snapshot(&self) -> Result<RakSessionSnapshot, RakSessionError> {
+        let (tx, rx) = oneshot::channel();
+        self.msg_tx
+            .send(RakSessionMsg::Snapshot(tx))
+            .map_err(|_| RakSessionError::Closed)?;
+        rx.await.map_err(|_| RakSessionError::Closed)
     }
 }

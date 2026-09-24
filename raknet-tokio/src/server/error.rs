@@ -8,4 +8,6 @@ pub enum RakServerError {
     RakServerError(#[from] raknet::prelude::RakServerError),
     #[error("IO Error: {0}")]
     IOError(#[from] tokio::io::Error),
+    #[error("Invalid address in session snapshot: {0}")]
+    InvalidSnapshot(#[from] std::net::AddrParseError),
 }

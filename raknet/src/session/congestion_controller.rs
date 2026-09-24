@@ -20,6 +20,66 @@ pub struct RakCongestionController {
     sent_times: HashMap<u32, SystemTime>,
 }
 
+/// [`RakCongestionController`] in a serializable form.
+///
+/// The RTT fields are `INFINITY` until the first round trip is measured, which JSON
+/// cannot represent, so they are `None` here rather than arriving back as zero.
+#[derive(Clone, Debug, facet::Facet)]
+pub struct RakCongestionSnapshot {
+    pub mtu: usize,
+    pub congestion_window: f64,
+    pub congestion_recovery_sequence: Option<u32>,
+    pub slow_start_threshold: f64,
+    pub rtt_estimate_ms: Option<f64>,
+    pub rtt_deviation_ms: Option<f64>,
+    pub bytes_not_acknowledged: usize,
+    pub sent_times: Vec<(u32, u64)>,
+}
+
+impl RakCongestionController {
+    pub fn snapshot(&self, epoch: SystemTime) -> RakCongestionSnapshot {
+        RakCongestionSnapshot {
+            mtu: self.mtu,
+            congestion_window: self.congestion_window,
+            congestion_recovery_sequence: self.congestion_recovery_sequence,
+            slow_start_threshold: self.slow_start_threshold,
+            rtt_estimate_ms: finite(self.rtt_estimate_ms),
+            rtt_deviation_ms: finite(self.rtt_deviation_ms),
+            bytes_not_acknowledged: self.bytes_not_acknowledged,
+            sent_times: self
+                .sent_times
+                .iter()
+                .map(|(seq, at)| (*seq, millis_since(epoch, *at)))
+                .collect(),
+        }
+    }
+
+    pub fn restore(snapshot: RakCongestionSnapshot, epoch: SystemTime) -> Self {
+        Self {
+            mtu: snapshot.mtu,
+            congestion_window: snapshot.congestion_window,
+            congestion_recovery_sequence: snapshot.congestion_recovery_sequence,
+            slow_start_threshold: snapshot.slow_start_threshold,
+            rtt_estimate_ms: snapshot.rtt_estimate_ms.unwrap_or(f64::INFINITY),
+            rtt_deviation_ms: snapshot.rtt_deviation_ms.unwrap_or(f64::INFINITY),
+            bytes_not_acknowledged: snapshot.bytes_not_acknowledged,
+            sent_times: snapshot
+                .sent_times
+                .into_iter()
+                .map(|(seq, offset)| (seq, epoch + Duration::from_millis(offset)))
+                .collect(),
+        }
+    }
+}
+
+fn finite(value: f64) -> Option<f64> {
+    value.is_finite().then_some(value)
+}
+
+fn millis_since(epoch: SystemTime, at: SystemTime) -> u64 {
+    at.duration_since(epoch).unwrap_or_default().as_millis() as u64
+}
+
 impl RakCongestionController {
     pub fn new(mtu: usize) -> Self {
         Self {

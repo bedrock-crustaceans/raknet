@@ -13,7 +13,7 @@ use crate::protocol::packets::disconnect::Disconnect;
 use crate::protocol::packets::frame_set::FrameSet;
 use crate::protocol::types::frame::Frame;
 use crate::sans::Sans;
-use crate::session::congestion_controller::RakCongestionController;
+use crate::session::congestion_controller::{RakCongestionController, RakCongestionSnapshot};
 use crate::session::error::RakSessionError;
 use crate::session::input::RakSessionInput;
 use crate::session::output::{RakDisconnectReason, RakSessionOutput};
@@ -28,7 +28,7 @@ use std::cmp::{Reverse, min};
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::io::Cursor;
 use std::mem::{replace, take};
-use std::net::SocketAddr;
+use std::net::{AddrParseError, SocketAddr};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::debug;
 
@@ -60,7 +60,7 @@ pub struct RakSession {
 
     outbound_seq: u32,
     outbound_spl: u16,
-    outbound_rel: u32,
+    pub(crate) outbound_rel: u32,
     outbound_queue: [VecDeque<Frame>; 4],
     outbound_cache: HashMap<u32, FrameSet>,
     outbound_resend: BinaryHeap<(Reverse<SystemTime>, u32)>,
@@ -76,6 +76,197 @@ pub struct RakSession {
     inbound_seq_idx: [u32; 32],
 
     output: VecDeque<RakSessionOutput>,
+}
+
+/// [`RakSession`] in a serializable form, so a session can be moved to another process
+/// and resumed there.
+///
+/// Times are milliseconds from [`RakSessionSnapshot::epoch_ms`], and the queues are
+/// `Vec`s, since `SystemTime`, `VecDeque` and `BinaryHeap` have no `Facet` impl. Pending
+/// output is not carried - drain it with `poll()` before taking a snapshot.
+#[derive(Clone, Debug, facet::Facet)]
+pub struct RakSessionSnapshot {
+    pub id: u64,
+    /// Text form: facet-json cannot construct a `SocketAddr` on the way back in.
+    pub addr: String,
+    pub state: RakSessionState,
+    pub guid: u64,
+    pub mtu: u16,
+    pub config: RakSessionConfig,
+
+    /// Wall clock the offsets below are measured from.
+    pub epoch_ms: u64,
+    pub last_tick_ms: u64,
+    pub last_ping_ms: u64,
+    pub last_recv_ms: u64,
+    pub last_pong_ms: u64,
+
+    pub congestion_controller: RakCongestionSnapshot,
+
+    pub queue: Vec<(Box<[u8]>, String)>,
+
+    pub sequences_recv: HashSet<u32>,
+    pub sequences_lost: HashSet<u32>,
+
+    pub outbound_seq: u32,
+    pub outbound_spl: u16,
+    pub outbound_rel: u32,
+    pub outbound_queue: Vec<Vec<Frame>>,
+    pub outbound_cache: Vec<(u32, FrameSet)>,
+    pub outbound_resend: Vec<(u64, u32)>,
+    pub outbound_ord_idx: [u32; 32],
+    pub outbound_seq_idx: [u32; 32],
+
+    pub inbound_seq: u32,
+    pub inbound_rel_seen: HashSet<u32>,
+    pub inbound_rel_order: Vec<u32>,
+    pub inbound_spl_queue: Vec<(u16, Vec<(u32, Frame)>)>,
+    pub inbound_ord_queue: Vec<(u8, Vec<(u32, Frame)>)>,
+    pub inbound_ord_idx: [u32; 32],
+    pub inbound_seq_idx: [u32; 32],
+}
+
+impl RakSession {
+    /// Captures this session's protocol state.
+    pub fn snapshot(&self) -> RakSessionSnapshot {
+        let epoch = UNIX_EPOCH;
+        RakSessionSnapshot {
+            id: self.id.0,
+            addr: self.addr.to_string(),
+            state: self.state,
+            guid: self.guid,
+            mtu: self.mtu,
+            config: self.config.clone(),
+
+            epoch_ms: 0,
+            last_tick_ms: millis_since(epoch, self.last_tick),
+            last_ping_ms: millis_since(epoch, self.last_ping),
+            last_recv_ms: millis_since(epoch, self.last_recv),
+            last_pong_ms: millis_since(epoch, self.last_pong),
+
+            congestion_controller: self.congestion_controller.snapshot(epoch),
+
+            queue: self
+                .queue
+                .iter()
+                .map(|(bytes, addr)| (bytes.clone(), addr.to_string()))
+                .collect(),
+
+            sequences_recv: self.sequences_recv.clone(),
+            sequences_lost: self.sequences_lost.clone(),
+
+            outbound_seq: self.outbound_seq,
+            outbound_spl: self.outbound_spl,
+            outbound_rel: self.outbound_rel,
+            outbound_queue: self
+                .outbound_queue
+                .iter()
+                .map(|q| q.iter().cloned().collect())
+                .collect(),
+            outbound_cache: self.outbound_cache.clone().into_iter().collect(),
+            outbound_resend: self
+                .outbound_resend
+                .iter()
+                .map(|(at, seq)| (millis_since(epoch, at.0), *seq))
+                .collect(),
+            outbound_ord_idx: self.outbound_ord_idx,
+            outbound_seq_idx: self.outbound_seq_idx,
+
+            inbound_seq: self.inbound_seq,
+            inbound_rel_seen: self.inbound_rel_seen.clone(),
+            inbound_rel_order: self.inbound_rel_order.iter().copied().collect(),
+            inbound_spl_queue: flatten_nested(&self.inbound_spl_queue),
+            inbound_ord_queue: flatten_nested(&self.inbound_ord_queue),
+            inbound_ord_idx: self.inbound_ord_idx,
+            inbound_seq_idx: self.inbound_seq_idx,
+        }
+    }
+
+    /// Rebuilds a session from [`RakSession::snapshot`].
+    pub fn restore(snapshot: RakSessionSnapshot) -> Result<Self, AddrParseError> {
+        let epoch = UNIX_EPOCH + Duration::from_millis(snapshot.epoch_ms);
+        let at = |offset: u64| epoch + Duration::from_millis(offset);
+
+        let mut outbound_queue: [VecDeque<Frame>; 4] = Default::default();
+        for (channel, frames) in snapshot.outbound_queue.into_iter().enumerate().take(4) {
+            outbound_queue[channel] = frames.into();
+        }
+
+        let queue = snapshot
+            .queue
+            .into_iter()
+            .map(|(bytes, addr)| Ok((bytes, addr.parse()?)))
+            .collect::<Result<VecDeque<_>, AddrParseError>>()?;
+
+        Ok(Self {
+            id: RakSessionId(snapshot.id),
+            addr: snapshot.addr.parse()?,
+            state: snapshot.state,
+            guid: snapshot.guid,
+            mtu: snapshot.mtu,
+            config: snapshot.config,
+
+            last_tick: at(snapshot.last_tick_ms),
+            last_ping: at(snapshot.last_ping_ms),
+            last_recv: at(snapshot.last_recv_ms),
+            last_pong: at(snapshot.last_pong_ms),
+
+            congestion_controller: RakCongestionController::restore(
+                snapshot.congestion_controller,
+                epoch,
+            ),
+
+            queue,
+
+            sequences_recv: snapshot.sequences_recv,
+            sequences_lost: snapshot.sequences_lost,
+
+            outbound_seq: snapshot.outbound_seq,
+            outbound_spl: snapshot.outbound_spl,
+            outbound_rel: snapshot.outbound_rel,
+            outbound_queue,
+            outbound_cache: snapshot.outbound_cache.into_iter().collect(),
+            outbound_resend: snapshot
+                .outbound_resend
+                .into_iter()
+                .map(|(offset, seq)| (Reverse(at(offset)), seq))
+                .collect(),
+            outbound_ord_idx: snapshot.outbound_ord_idx,
+            outbound_seq_idx: snapshot.outbound_seq_idx,
+
+            inbound_seq: snapshot.inbound_seq,
+            inbound_rel_seen: snapshot.inbound_rel_seen,
+            inbound_rel_order: snapshot.inbound_rel_order.into(),
+            inbound_spl_queue: rebuild_nested(snapshot.inbound_spl_queue),
+            inbound_ord_queue: rebuild_nested(snapshot.inbound_ord_queue),
+            inbound_ord_idx: snapshot.inbound_ord_idx,
+            inbound_seq_idx: snapshot.inbound_seq_idx,
+
+            output: VecDeque::new(),
+        })
+    }
+}
+
+fn millis_since(epoch: SystemTime, at: SystemTime) -> u64 {
+    at.duration_since(epoch).unwrap_or_default().as_millis() as u64
+}
+
+/// JSON object keys are strings, so maps keyed by an integer are carried as pairs.
+fn flatten_nested<K: Copy + Eq + std::hash::Hash>(
+    map: &HashMap<K, HashMap<u32, Frame>>,
+) -> Vec<(K, Vec<(u32, Frame)>)> {
+    map.iter()
+        .map(|(key, inner)| (*key, inner.clone().into_iter().collect()))
+        .collect()
+}
+
+fn rebuild_nested<K: Eq + std::hash::Hash>(
+    pairs: Vec<(K, Vec<(u32, Frame)>)>,
+) -> HashMap<K, HashMap<u32, Frame>> {
+    pairs
+        .into_iter()
+        .map(|(key, inner)| (key, inner.into_iter().collect()))
+        .collect()
 }
 
 impl Sans for RakSession {
@@ -845,6 +1036,75 @@ impl RakSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_snapshot_round_trips_through_json_and_resumes_where_it_left_off() {
+        let mut session = RakSession::new(
+            RakSessionId(42),
+            "127.0.0.1:19132".parse().unwrap(),
+            0xDEAD_BEEF,
+            crate::util::constants::MAX_MTU_SIZE,
+            |_| {},
+        );
+
+        let now = SystemTime::now();
+        session
+            .handle(RakSessionInput::Send(
+                Box::from(*b"hello"),
+                RakReliability::ReliableOrdered,
+                RakPriority::Immediate,
+                now,
+            ))
+            .unwrap();
+        while session.poll().is_some() {}
+
+        let before_seq = session.outbound_rel;
+        assert!(
+            before_seq > 0,
+            "sending a reliable frame should advance outbound_rel"
+        );
+
+        let json = facet_json::to_string(&session.snapshot()).expect("snapshot must serialize");
+        let mut resumed =
+            RakSession::restore(facet_json::from_str(&json).expect("snapshot must deserialize"))
+                .expect("a snapshot's own address must parse");
+
+        assert_eq!(resumed.id, session.id);
+        assert_eq!(resumed.addr, session.addr);
+        assert_eq!(resumed.guid, session.guid);
+        assert_eq!(resumed.outbound_rel, before_seq);
+
+        resumed
+            .handle(RakSessionInput::Send(
+                Box::from(*b"world"),
+                RakReliability::ReliableOrdered,
+                RakPriority::Immediate,
+                now,
+            ))
+            .unwrap();
+        assert_eq!(resumed.outbound_rel, before_seq + 1);
+    }
+
+    /// JSON has no infinity, and an unmeasured RTT is infinite - it must not come back
+    /// as zero.
+    #[test]
+    fn an_unmeasured_rtt_survives_a_json_round_trip() {
+        let session = RakSession::new(
+            RakSessionId(1),
+            "127.0.0.1:19132".parse().unwrap(),
+            0,
+            crate::util::constants::MAX_MTU_SIZE,
+            |_| {},
+        );
+
+        let json = facet_json::to_string(&session.snapshot()).unwrap();
+        let resumed = RakSession::restore(facet_json::from_str(&json).unwrap()).unwrap();
+
+        assert_eq!(
+            resumed.congestion_controller.retransmission_timeout(),
+            session.congestion_controller.retransmission_timeout()
+        );
+    }
 
     #[test]
     fn out_of_range_order_channel_does_not_panic() {

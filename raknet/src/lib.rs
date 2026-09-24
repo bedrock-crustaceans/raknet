@@ -17,7 +17,7 @@ pub mod prelude {
         output::RakServerOutput,
     };
     pub use crate::session::{
-        RakSession, RakSessionId,
+        RakSession, RakSessionId, RakSessionSnapshot,
         config::RakSessionConfig,
         error::RakSessionError,
         input::RakSessionInput,
