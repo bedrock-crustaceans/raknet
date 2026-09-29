@@ -6,7 +6,7 @@ use crate::client::state::RakClientState;
 use crate::prelude::{RakServerError, RakSession};
 use raknet::prelude::{
     RakClient as RakClientIntl, RakClientConfig, RakClientError, RakClientInput, RakClientOutput,
-    RakSessionId, RakSessionInput, Sans,
+    RakSession as RakSessionIntl, RakSessionId, RakSessionInput, RakSessionSnapshot, Sans,
 };
 use std::collections::{HashMap, VecDeque};
 use std::mem::take;
@@ -42,7 +42,7 @@ impl RakClient {
 
         let (msg_tx, msg_rx) = unbounded_channel();
 
-        let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).await?;
+        let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, config.local_port)).await?;
 
         let handle = tokio::spawn({
             let config = config.clone();
@@ -95,6 +95,23 @@ impl RakClient {
                                     let _ = client.handle(RakClientInput::Connect(addr, now));
 
                                     connect = Some(sender);
+                                }
+                                RakClientMsg::Adopt(snapshot, reply) => {
+                                    match RakSessionIntl::restore(snapshot) {
+                                        Ok(session) => {
+                                            client.adopt(session);
+                                            // The session arrives back through `poll()`
+                                            // as `SessionConnected`, the same path a
+                                            // handshaked one takes - so the reply is
+                                            // handed to the connect slot rather than
+                                            // sent here.
+                                            connect = Some(reply);
+                                        }
+                                        Err(err) => {
+                                            debug!("cannot adopt a session: {err}");
+                                            drop(reply);
+                                        }
+                                    }
                                 }
                                 RakClientMsg::Stop => {
                                     if let Some(session) = &session_tx {
@@ -187,6 +204,25 @@ impl RakClient {
         let (tx, rx) = oneshot::channel();
 
         let _ = msg_tx.send(RakClientMsg::Ping(addr, tx));
+        rx.await.map_err(|_| RakClientError::Closed)
+    }
+
+    /// Resumes a session captured with [`RakSession::snapshot`] on another client.
+    ///
+    /// The peer is not handshaked again - it is not even contacted. It will keep sending
+    /// to whatever address the previous holder used until something tells it otherwise,
+    /// so the caller owns getting the peer re-pointed at this client's socket.
+    pub async fn adopt(&self, snapshot: RakSessionSnapshot) -> Result<RakSession, RakClientError> {
+        let RakClientState::Running { msg_tx, .. } = &self.state else {
+            return Err(RakClientError::Closed);
+        };
+
+        let (tx, rx) = oneshot::channel();
+
+        msg_tx
+            .send(RakClientMsg::Adopt(snapshot, tx))
+            .map_err(|_| RakClientError::Closed)?;
+
         rx.await.map_err(|_| RakClientError::Closed)
     }
 

@@ -377,7 +377,7 @@ impl RakServer {
     ) -> Result<(), RakServerError> {
         let request = OpenConnectionRequest2::deserialize(cursor)?;
 
-        if request.addr.port() != self.addr.port() {
+        if self.config.require_dialled_port && request.addr.port() != self.addr.port() {
             return Err(RakServerError::RefusingConnection(format!(
                 "refusing connection from {} due to port mismatch",
                 addr

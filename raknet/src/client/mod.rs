@@ -395,6 +395,32 @@ impl RakClient {
         Ok(())
     }
 
+    /// Takes over a session from another client, continuing its protocol state rather
+    /// than handshaking the peer again.
+    ///
+    /// The mirror of [`crate::server::RakServer::adopt`], and the reason the outgoing
+    /// side needs one at all: a proxy that hands a player to a replacement has to hand
+    /// over the connection it holds *to the game server* too, and that connection is an
+    /// outgoing one. Without this the replacement can only dial afresh, which the game
+    /// server sees as a new player.
+    ///
+    /// The session keeps the sequence numbers, reliability windows and split queues the
+    /// snapshot carries, so the peer's own stack sees one continuous conversation. What
+    /// it cannot carry is the peer's idea of *where* this session lives: the datagrams
+    /// now leave from another socket, so the peer has to be told to expect them from the
+    /// new address.
+    pub fn adopt(&mut self, session: RakSession) {
+        let addr = session.addr;
+
+        self.mtu = session.mtu;
+        self.state = RakClientState::HandshakeCompleted(addr);
+
+        debug!("adopting a session with {} at mtu {}", addr, self.mtu);
+
+        self.output
+            .push_back(RakClientOutput::SessionConnected(Box::new(session)));
+    }
+
     fn handle_connection_request_accepted(
         session: &mut RakSession,
         addr: SocketAddr,

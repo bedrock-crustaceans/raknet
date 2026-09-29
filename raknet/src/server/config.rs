@@ -13,6 +13,14 @@ pub struct RakServerConfig {
     pub packet_limit: i32,
     pub total_packet_limit: i32,
     pub security: bool,
+    /// Whether a client must have dialled the port this server is bound to.
+    ///
+    /// `OpenConnectionRequest2` carries the address the client dialled, and comparing it
+    /// against this server's own is a cheap sanity check. It is wrong behind a port
+    /// mapping, though: a client reaching a container through a published host port dialled
+    /// that port, never the one the socket is bound to inside, so every connection would be
+    /// refused. Turn it off when the server sits behind such a mapping.
+    pub require_dialled_port: bool,
 }
 
 impl Default for RakServerConfig {
@@ -28,6 +36,7 @@ impl Default for RakServerConfig {
             packet_limit: constants::PACKET_LIMIT,
             total_packet_limit: constants::TOTAL_PACKET_LIMIT,
             security: false,
+            require_dialled_port: true,
         }
     }
 }

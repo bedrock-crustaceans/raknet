@@ -43,7 +43,9 @@ pub struct RakSession {
     pub addr: SocketAddr,
     pub state: RakSessionState,
     pub guid: u64,
-    mtu: u16,
+    /// Negotiated during the handshake, and read by a client adopting this session so it
+    /// keeps sizing datagrams the way the peer already agreed to.
+    pub mtu: u16,
     config: RakSessionConfig,
 
     last_tick: SystemTime,
