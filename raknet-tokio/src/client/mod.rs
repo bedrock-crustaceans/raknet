@@ -55,7 +55,7 @@ impl RakClient {
                     SocketAddr,
                     VecDeque<(oneshot::Sender<(Box<[u8]>, Duration)>, SystemTime)>,
                 > = HashMap::new();
-                let mut connect: Option<oneshot::Sender<RakSession>> = None;
+                let mut connect: Option<oneshot::Sender<Result<RakSession, RakClientError>>> = None;
 
                 let mut buf = vec![0u8; config.max_mtu_size as usize];
                 let mut client = RakClientIntl::new(config);
@@ -97,20 +97,14 @@ impl RakClient {
                                     connect = Some(sender);
                                 }
                                 RakClientMsg::Adopt(snapshot, reply) => {
-                                    match RakSessionIntl::restore(snapshot) {
-                                        Ok(session) => {
-                                            client.adopt(session);
-                                            // The session arrives back through `poll()`
-                                            // as `SessionConnected`, the same path a
-                                            // handshaked one takes - so the reply is
-                                            // handed to the connect slot rather than
-                                            // sent here.
-                                            connect = Some(reply);
-                                        }
-                                        Err(err) => {
-                                            debug!("cannot adopt a session: {err}");
-                                            drop(reply);
-                                        }
+                                    match RakSessionIntl::restore(*snapshot) {
+                                        Ok(session) => match client.adopt(session) {
+                                            Ok(()) => connect = Some(reply),
+                                            Err(e) => {
+                                                let _ = reply.send(Err(e));
+                                            }
+                                        },
+                                        Err(e) => debug!("cannot adopt a session: {e}"),
                                     }
                                 }
                                 RakClientMsg::Stop => {
@@ -153,7 +147,7 @@ impl RakClient {
                                 session_tx = Some(tx);
 
                                 if let Some(sender) = take(&mut connect) {
-                                    let _ = sender.send(session);
+                                    let _ = sender.send(Ok(session));
                                 }
                             }
                             RakClientOutput::Wait(duration) => {
@@ -209,9 +203,9 @@ impl RakClient {
 
     /// Resumes a session captured with [`RakSession::snapshot`] on another client.
     ///
-    /// The peer is not handshaked again - it is not even contacted. It will keep sending
-    /// to whatever address the previous holder used until something tells it otherwise,
-    /// so the caller owns getting the peer re-pointed at this client's socket.
+    /// Fails with [`RakClientError::AlreadyConnected`] if this client already has a
+    /// session or is connecting. The peer is not contacted, so the caller is responsible
+    /// for pointing it at this client's socket.
     pub async fn adopt(&self, snapshot: RakSessionSnapshot) -> Result<RakSession, RakClientError> {
         let RakClientState::Running { msg_tx, .. } = &self.state else {
             return Err(RakClientError::Closed);
@@ -220,10 +214,10 @@ impl RakClient {
         let (tx, rx) = oneshot::channel();
 
         msg_tx
-            .send(RakClientMsg::Adopt(snapshot, tx))
+            .send(RakClientMsg::Adopt(Box::new(snapshot), tx))
             .map_err(|_| RakClientError::Closed)?;
 
-        rx.await.map_err(|_| RakClientError::Closed)
+        rx.await.map_err(|_| RakClientError::Closed)?
     }
 
     pub async fn connect(&self, addr: SocketAddr) -> Result<RakSession, RakClientError> {
@@ -234,7 +228,7 @@ impl RakClient {
         let (tx, rx) = oneshot::channel();
 
         let _ = msg_tx.send(RakClientMsg::Connect(addr, tx));
-        rx.await.map_err(|_| RakClientError::Closed)
+        rx.await.map_err(|_| RakClientError::Closed)?
     }
 }
 

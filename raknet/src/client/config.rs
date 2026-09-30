@@ -4,12 +4,6 @@ use std::time::Duration;
 
 #[derive(Clone, Debug)]
 pub struct RakClientConfig {
-    /// Local UDP port to send from, or 0 for an ephemeral one.
-    ///
-    /// Worth setting when the peer has to be told where this client lives - a session
-    /// adopted by another process arrives from a different socket, and the only address
-    /// anything outside that process can predict is one that was chosen rather than
-    /// handed out by the kernel.
     pub local_port: u16,
     pub guid: u64,
     pub protocol: u8,
