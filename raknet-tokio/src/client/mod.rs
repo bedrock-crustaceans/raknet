@@ -55,7 +55,7 @@ impl RakClient {
                     SocketAddr,
                     VecDeque<(oneshot::Sender<(Box<[u8]>, Duration)>, SystemTime)>,
                 > = HashMap::new();
-                let mut connect: Option<oneshot::Sender<RakSession>> = None;
+                let mut connect: Option<oneshot::Sender<Result<RakSession, RakClientError>>> = None;
 
                 let mut buf = vec![0u8; config.max_mtu_size as usize];
                 let mut client = RakClientIntl::new(config);
@@ -92,9 +92,12 @@ impl RakClient {
                                     pings.entry(addr).or_default().push_back((sender, now));
                                 }
                                 RakClientMsg::Connect(addr, sender) => {
-                                    let _ = client.handle(RakClientInput::Connect(addr, now));
-
-                                    connect = Some(sender);
+                                    match client.handle(RakClientInput::Connect(addr, now)) {
+                                        Ok(()) => connect = Some(sender),
+                                        Err(err) => {
+                                            let _ = sender.send(Err(err));
+                                        }
+                                    }
                                 }
                                 RakClientMsg::Adopt(snapshot, reply) => {
                                     match RakSessionIntl::restore(snapshot) {
@@ -123,7 +126,11 @@ impl RakClient {
                             }
                         }
                         _ = &mut timer => {
-                            let _ = client.handle(RakClientInput::Update(SystemTime::now()));
+                            if let Err(err) = client.handle(RakClientInput::Update(SystemTime::now()))
+                                && let Some(sender) = take(&mut connect)
+                            {
+                                let _ = sender.send(Err(err));
+                            }
                         }
                     }
 
@@ -153,7 +160,7 @@ impl RakClient {
                                 session_tx = Some(tx);
 
                                 if let Some(sender) = take(&mut connect) {
-                                    let _ = sender.send(session);
+                                    let _ = sender.send(Ok(session));
                                 }
                             }
                             RakClientOutput::Wait(duration) => {
@@ -223,7 +230,7 @@ impl RakClient {
             .send(RakClientMsg::Adopt(snapshot, tx))
             .map_err(|_| RakClientError::Closed)?;
 
-        rx.await.map_err(|_| RakClientError::Closed)
+        rx.await.unwrap_or(Err(RakClientError::Closed))
     }
 
     pub async fn connect(&self, addr: SocketAddr) -> Result<RakSession, RakClientError> {
@@ -234,7 +241,7 @@ impl RakClient {
         let (tx, rx) = oneshot::channel();
 
         let _ = msg_tx.send(RakClientMsg::Connect(addr, tx));
-        rx.await.map_err(|_| RakClientError::Closed)
+        rx.await.unwrap_or(Err(RakClientError::Closed))
     }
 }
 

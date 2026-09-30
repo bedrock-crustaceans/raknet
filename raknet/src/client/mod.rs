@@ -237,7 +237,14 @@ impl RakClient {
     }
 
     fn handle_timeout(&mut self, now: SystemTime) -> Result<(), RakClientError> {
-        if matches!(self.state, RakClientState::Unconnected) {
+        // Only a handshake in progress has anything to time out; the session of a
+        // connected client keeps its own timers. Every other state still has to ask
+        // for the next update, or the driver's timer stays elapsed and fires again
+        // immediately.
+        if matches!(
+            self.state,
+            RakClientState::Unconnected | RakClientState::HandshakeCompleted(_)
+        ) {
             self.output
                 .push_back(RakClientOutput::Wait(self.config.conn_attempt_interval));
 
@@ -249,7 +256,7 @@ impl RakClient {
                 "RakClient connection failed after {:?}",
                 self.config.conn_attempt_timeout
             );
-            return Err(RakClientError::ConnectionFailed);
+            return self.fail_connect();
         }
 
         if now >= self.last_attempt + self.config.conn_attempt_interval {
@@ -272,7 +279,7 @@ impl RakClient {
                     "RakClient connection failed after {} attempts",
                     self.attempts
                 );
-                return Err(RakClientError::ConnectionFailed);
+                return self.fail_connect();
             }
         }
 
@@ -286,6 +293,16 @@ impl RakClient {
         self.output.push_back(RakClientOutput::Wait(duration));
 
         Ok(())
+    }
+
+    /// Gives up the handshake in progress: back to unconnected, so a later
+    /// `Connect` can start over and updates keep being scheduled.
+    fn fail_connect(&mut self) -> Result<(), RakClientError> {
+        self.state = RakClientState::Unconnected;
+        self.attempts = 0;
+        self.output
+            .push_back(RakClientOutput::Wait(self.config.conn_attempt_interval));
+        Err(RakClientError::ConnectionFailed)
     }
 
     fn send_open_connection_request_1(&mut self, addr: SocketAddr) -> Result<(), RakClientError> {
@@ -507,6 +524,45 @@ mod tests {
         let result = client.handle(RakClientInput::Update(start + Duration::from_millis(200)));
 
         assert!(matches!(result, Err(RakClientError::ConnectionFailed)));
+    }
+
+    #[test]
+    fn a_connected_client_never_times_out_its_handshake() {
+        let mut client = RakClient::new(RakClientConfig {
+            conn_attempt_timeout: Duration::from_millis(100),
+            ..RakClientConfig::default()
+        });
+        let addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let start = SystemTime::now();
+        client.connect_started = start;
+        client.state = RakClientState::HandshakeCompleted(addr);
+
+        let result = client.handle(RakClientInput::Update(start + Duration::from_secs(3600)));
+
+        assert!(result.is_ok());
+        assert!(matches!(
+            client.state,
+            RakClientState::HandshakeCompleted(_)
+        ));
+        assert!(matches!(client.poll(), Some(RakClientOutput::Wait(_))));
+    }
+
+    #[test]
+    fn a_failed_connect_resets_and_still_schedules_the_next_update() {
+        let mut client = RakClient::new(RakClientConfig {
+            conn_attempt_timeout: Duration::from_millis(100),
+            ..RakClientConfig::default()
+        });
+        let addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let start = SystemTime::now();
+        client.handle(RakClientInput::Connect(addr, start)).unwrap();
+        while client.poll().is_some() {}
+
+        let result = client.handle(RakClientInput::Update(start + Duration::from_millis(200)));
+
+        assert!(matches!(result, Err(RakClientError::ConnectionFailed)));
+        assert!(matches!(client.state, RakClientState::Unconnected));
+        assert!(matches!(client.poll(), Some(RakClientOutput::Wait(_))));
     }
 
     #[test]
