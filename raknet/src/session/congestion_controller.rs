@@ -132,22 +132,25 @@ impl RakCongestionController {
         self.congestion_window <= self.slow_start_threshold || self.slow_start_threshold == 0.0
     }
 
-    pub fn resent(&mut self, sequence: u32) {
-        if self.congestion_recovery_sequence.is_none() {
+    pub fn resent(&mut self, next_sequence: u32, bandwidth_limited: bool) {
+        if bandwidth_limited
+            && self.congestion_recovery_sequence.is_none()
+            && self.congestion_window > 2.0 * self.mtu as f64
+        {
             self.slow_start_threshold = (self.congestion_window * 0.5).max(self.mtu as f64);
             self.congestion_window = self.mtu as f64;
 
-            self.congestion_recovery_sequence = Some(sequence);
+            self.congestion_recovery_sequence = Some(next_sequence);
         }
     }
 
-    pub fn nacked(&mut self) {
-        if self.congestion_recovery_sequence.is_some() {
-            self.slow_start_threshold = self.congestion_window * 0.75;
+    pub fn nacked(&mut self, bandwidth_limited: bool) {
+        if bandwidth_limited && self.congestion_recovery_sequence.is_none() {
+            self.slow_start_threshold = self.congestion_window * 0.5;
         }
     }
 
-    pub fn acked(&mut self, now: SystemTime, seq: u32, size: usize, last_sequence: u32) {
+    pub fn acked(&mut self, now: SystemTime, seq: u32, size: usize, bandwidth_limited: bool) {
         if let Some(sent_at) = self.sent_times.remove(&seq) {
             let rtt_ms = now
                 .duration_since(sent_at)
@@ -167,13 +170,15 @@ impl RakCongestionController {
                 self.rtt_deviation_ms += d * (diff.abs() - self.rtt_deviation_ms);
             }
 
-            let in_recovery_period = match self.congestion_recovery_sequence {
-                Some(rec_seq) => seq < rec_seq,
-                None => false,
-            };
+            if !bandwidth_limited {
+                return;
+            }
 
-            if in_recovery_period {
-                self.congestion_recovery_sequence = Some(last_sequence);
+            if self
+                .congestion_recovery_sequence
+                .is_some_and(|rec_seq| seq > rec_seq)
+            {
+                self.congestion_recovery_sequence = None;
             }
 
             if self.slow_start() {
@@ -185,8 +190,9 @@ impl RakCongestionController {
                     self.congestion_window = self.slow_start_threshold
                         + (self.mtu as f64).powi(2) / self.congestion_window;
                 }
-            } else if in_recovery_period {
-                self.congestion_window += (self.mtu as f64).powi(2) / self.congestion_window;
+            } else {
+                self.congestion_window +=
+                    size as f64 * (self.mtu as f64).powi(2) / self.congestion_window.powi(2);
             }
         }
     }
@@ -194,5 +200,11 @@ impl RakCongestionController {
     pub fn sent(&mut self, seq: u32, size: usize, now: SystemTime) {
         self.bytes_not_acknowledged += size;
         self.sent_times.insert(seq, now);
+    }
+
+    pub fn lost(&mut self, seq: u32, size: usize) {
+        if self.sent_times.remove(&seq).is_some() {
+            self.bytes_not_acknowledged -= size;
+        }
     }
 }

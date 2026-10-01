@@ -52,6 +52,7 @@ pub struct RakSession {
     last_pong: SystemTime,
 
     congestion_controller: RakCongestionController,
+    bandwidth_limited: bool,
 
     queue: VecDeque<(Box<[u8]>, SocketAddr)>,
 
@@ -215,6 +216,7 @@ impl RakSession {
                 snapshot.congestion_controller,
                 epoch,
             ),
+            bandwidth_limited: false,
 
             queue,
 
@@ -340,6 +342,7 @@ impl RakSession {
 
             state: RakSessionState::Connected,
             congestion_controller: RakCongestionController::new(mtu as usize),
+            bandwidth_limited: false,
 
             sequences_recv: HashSet::new(),
             sequences_lost: HashSet::new(),
@@ -485,14 +488,15 @@ impl RakSession {
 
             self.outbound_resend.pop();
 
-            self.congestion_controller.resent(seq);
+            self.congestion_controller
+                .resent(self.outbound_seq, self.bandwidth_limited);
 
             let set = self.outbound_cache.remove(&seq).expect("unreachable");
             pending.push(set);
         }
 
         for set in pending {
-            self.send_frame_set(set, false, now)?;
+            self.send_frame_set(set, false, false, now)?;
         }
         Ok(())
     }
@@ -507,6 +511,7 @@ impl RakSession {
                 frames.push(frame);
             }
         }
+        self.bandwidth_limited = self.outbound_queue.iter().any(|queue| !queue.is_empty());
 
         if frames.is_empty() {
             return Ok(());
@@ -514,7 +519,7 @@ impl RakSession {
 
         let sets = self.make_sets(frames);
         for set in sets {
-            self.send_frame_set(set, false, now)?;
+            self.send_frame_set(set, false, true, now)?;
         }
         Ok(())
     }
@@ -577,6 +582,7 @@ impl RakSession {
         &mut self,
         frameset: FrameSet,
         immediate: bool,
+        first_send: bool,
         now: SystemTime,
     ) -> Result<(), RakSessionError> {
         let mut buf = Vec::with_capacity(frameset.size_hint());
@@ -596,7 +602,7 @@ impl RakSession {
         if reliable {
             let resend = now + self.congestion_controller.retransmission_timeout();
 
-            if !self.outbound_cache.contains_key(&frameset.sequence) {
+            if first_send {
                 self.congestion_controller
                     .sent(frameset.sequence, frameset.size_hint(), now);
             }
@@ -708,7 +714,7 @@ impl RakSession {
             RakPriority::Immediate => {
                 let sets = self.make_sets(frames);
                 for set in sets {
-                    self.send_frame_set(set, true, now)?;
+                    self.send_frame_set(set, true, true, now)?;
                 }
             }
             _ => self.outbound_queue[priority as usize].extend(frames),
@@ -729,15 +735,17 @@ impl RakSession {
             };
             match ack.is_nack {
                 true => {
+                    self.congestion_controller
+                        .lost(set.sequence, set.size_hint());
                     self.queue_frames(set.frames, RakPriority::Immediate, now)?;
-                    self.congestion_controller.nacked();
+                    self.congestion_controller.nacked(self.bandwidth_limited);
                 }
                 false => {
                     self.congestion_controller.acked(
                         now,
                         set.sequence,
                         set.size_hint(),
-                        self.inbound_seq,
+                        self.bandwidth_limited,
                     );
                 }
             }
