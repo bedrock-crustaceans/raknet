@@ -237,7 +237,9 @@ impl RakClient {
     }
 
     fn handle_timeout(&mut self, now: SystemTime) -> Result<(), RakClientError> {
-        if matches!(self.state, RakClientState::Unconnected) {
+        let connected =
+            matches!(self.state, RakClientState::HandshakeCompleted(_)) && self.session.is_none();
+        if connected || matches!(self.state, RakClientState::Unconnected) {
             self.output
                 .push_back(RakClientOutput::Wait(self.config.conn_attempt_interval));
 
@@ -276,10 +278,14 @@ impl RakClient {
             }
         }
 
-        let next = min(
-            self.last_attempt + self.config.conn_attempt_interval,
-            self.connect_started + self.config.conn_attempt_timeout,
-        );
+        let timeout = self.connect_started + self.config.conn_attempt_timeout;
+        let next = match self.state {
+            RakClientState::HandshakeCompleted(_) => timeout,
+            _ => min(
+                self.last_attempt + self.config.conn_attempt_interval,
+                timeout,
+            ),
+        };
 
         let duration = next.duration_since(now).unwrap_or(Duration::from_secs(0));
 
@@ -501,6 +507,41 @@ mod tests {
         let result = client.handle(RakClientInput::Update(start + Duration::from_millis(200)));
 
         assert!(matches!(result, Err(RakClientError::ConnectionFailed)));
+    }
+
+    fn last_wait(client: &mut RakClient) -> Option<Duration> {
+        let mut wait = None;
+        while let Some(out) = client.poll() {
+            if let RakClientOutput::Wait(duration) = out {
+                wait = Some(duration);
+            }
+        }
+        wait
+    }
+
+    #[test]
+    fn connected_client_schedules_a_wait_instead_of_spinning() {
+        let mut client = RakClient::new(RakClientConfig::default());
+        let addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let start = SystemTime::now();
+
+        client.handle(RakClientInput::Connect(addr, start)).unwrap();
+        last_wait(&mut client);
+        client.state = RakClientState::HandshakeCompleted(addr);
+
+        for elapsed in [Duration::from_secs(2), Duration::from_secs(20)] {
+            let result = client.handle(RakClientInput::Update(start + elapsed));
+            assert!(
+                result.is_ok(),
+                "update {elapsed:?} after connecting failed: {result:?}"
+            );
+
+            let wait = last_wait(&mut client);
+            assert!(
+                wait.is_some_and(|w| w > Duration::ZERO),
+                "update {elapsed:?} after connecting scheduled {wait:?}"
+            );
+        }
     }
 
     #[test]
