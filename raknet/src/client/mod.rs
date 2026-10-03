@@ -395,6 +395,26 @@ impl RakClient {
         Ok(())
     }
 
+    /// Takes over a session from another client, continuing its protocol state rather
+    /// than handshaking the peer again.
+    pub fn adopt(&mut self, session: RakSession) -> Result<(), RakClientError> {
+        if !matches!(self.state, RakClientState::Unconnected) {
+            return Err(RakClientError::AlreadyConnected);
+        }
+
+        let addr = session.addr;
+
+        self.mtu = session.mtu;
+        self.state = RakClientState::HandshakeCompleted(addr);
+
+        debug!("adopting a session with {} at mtu {}", addr, self.mtu);
+
+        self.output
+            .push_back(RakClientOutput::SessionConnected(Box::new(session)));
+
+        Ok(())
+    }
+
     fn handle_connection_request_accepted(
         session: &mut RakSession,
         addr: SocketAddr,

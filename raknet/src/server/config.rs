@@ -13,6 +13,7 @@ pub struct RakServerConfig {
     pub packet_limit: i32,
     pub total_packet_limit: i32,
     pub security: bool,
+    pub require_dialled_port: bool,
 }
 
 impl Default for RakServerConfig {
@@ -28,6 +29,7 @@ impl Default for RakServerConfig {
             packet_limit: constants::PACKET_LIMIT,
             total_packet_limit: constants::TOTAL_PACKET_LIMIT,
             security: false,
+            require_dialled_port: true,
         }
     }
 }

@@ -4,6 +4,7 @@ use std::time::Duration;
 
 #[derive(Clone, Debug)]
 pub struct RakClientConfig {
+    pub local_port: u16,
     pub guid: u64,
     pub protocol: u8,
     pub min_mtu_size: u16,
@@ -16,6 +17,7 @@ pub struct RakClientConfig {
 impl Default for RakClientConfig {
     fn default() -> Self {
         Self {
+            local_port: 0,
             min_mtu_size: constants::MIN_MTU_SIZE,
             max_mtu_size: constants::MAX_MTU_SIZE,
             protocol: constants::PROTOCOL,

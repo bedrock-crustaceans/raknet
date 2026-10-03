@@ -6,7 +6,7 @@ use crate::client::state::RakClientState;
 use crate::prelude::{RakServerError, RakSession};
 use raknet::prelude::{
     RakClient as RakClientIntl, RakClientConfig, RakClientError, RakClientInput, RakClientOutput,
-    RakSessionId, RakSessionInput, Sans,
+    RakSession as RakSessionIntl, RakSessionId, RakSessionInput, RakSessionSnapshot, Sans,
 };
 use std::collections::{HashMap, VecDeque};
 use std::mem::take;
@@ -42,7 +42,7 @@ impl RakClient {
 
         let (msg_tx, msg_rx) = unbounded_channel();
 
-        let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).await?;
+        let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, config.local_port)).await?;
 
         let handle = tokio::spawn({
             let config = config.clone();
@@ -55,7 +55,7 @@ impl RakClient {
                     SocketAddr,
                     VecDeque<(oneshot::Sender<(Box<[u8]>, Duration)>, SystemTime)>,
                 > = HashMap::new();
-                let mut connect: Option<oneshot::Sender<RakSession>> = None;
+                let mut connect: Option<oneshot::Sender<Result<RakSession, RakClientError>>> = None;
 
                 let mut buf = vec![0u8; config.max_mtu_size as usize];
                 let mut client = RakClientIntl::new(config);
@@ -95,6 +95,17 @@ impl RakClient {
                                     let _ = client.handle(RakClientInput::Connect(addr, now));
 
                                     connect = Some(sender);
+                                }
+                                RakClientMsg::Adopt(snapshot, reply) => {
+                                    match RakSessionIntl::restore(*snapshot) {
+                                        Ok(session) => match client.adopt(session) {
+                                            Ok(()) => connect = Some(reply),
+                                            Err(e) => {
+                                                let _ = reply.send(Err(e));
+                                            }
+                                        },
+                                        Err(e) => debug!("cannot adopt a session: {e}"),
+                                    }
                                 }
                                 RakClientMsg::Stop => {
                                     if let Some(session) = &session_tx {
@@ -136,7 +147,7 @@ impl RakClient {
                                 session_tx = Some(tx);
 
                                 if let Some(sender) = take(&mut connect) {
-                                    let _ = sender.send(session);
+                                    let _ = sender.send(Ok(session));
                                 }
                             }
                             RakClientOutput::Wait(duration) => {
@@ -190,6 +201,25 @@ impl RakClient {
         rx.await.map_err(|_| RakClientError::Closed)
     }
 
+    /// Resumes a session captured with [`RakSession::snapshot`] on another client.
+    ///
+    /// Fails with [`RakClientError::AlreadyConnected`] if this client already has a
+    /// session or is connecting. The peer is not contacted, so the caller is responsible
+    /// for pointing it at this client's socket.
+    pub async fn adopt(&self, snapshot: RakSessionSnapshot) -> Result<RakSession, RakClientError> {
+        let RakClientState::Running { msg_tx, .. } = &self.state else {
+            return Err(RakClientError::Closed);
+        };
+
+        let (tx, rx) = oneshot::channel();
+
+        msg_tx
+            .send(RakClientMsg::Adopt(Box::new(snapshot), tx))
+            .map_err(|_| RakClientError::Closed)?;
+
+        rx.await.map_err(|_| RakClientError::Closed)?
+    }
+
     pub async fn connect(&self, addr: SocketAddr) -> Result<RakSession, RakClientError> {
         let RakClientState::Running { msg_tx, .. } = &self.state else {
             return Err(RakClientError::Closed);
@@ -198,7 +228,7 @@ impl RakClient {
         let (tx, rx) = oneshot::channel();
 
         let _ = msg_tx.send(RakClientMsg::Connect(addr, tx));
-        rx.await.map_err(|_| RakClientError::Closed)
+        rx.await.map_err(|_| RakClientError::Closed)?
     }
 }
 

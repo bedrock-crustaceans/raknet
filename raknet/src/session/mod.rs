@@ -43,7 +43,7 @@ pub struct RakSession {
     pub addr: SocketAddr,
     pub state: RakSessionState,
     pub guid: u64,
-    mtu: u16,
+    pub mtu: u16,
     config: RakSessionConfig,
 
     last_tick: SystemTime,
