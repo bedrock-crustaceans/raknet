@@ -51,10 +51,7 @@ impl RakClient {
 
             async move {
                 let mut session_tx: Option<UnboundedSender<RakSessionInput>> = None;
-                let mut pings: HashMap<
-                    SocketAddr,
-                    VecDeque<(oneshot::Sender<(Box<[u8]>, Duration)>, SystemTime)>,
-                > = HashMap::new();
+                let mut pings: HashMap<SocketAddr, VecDeque<_>> = HashMap::new();
                 let mut connect: Option<oneshot::Sender<Result<RakSession, RakClientError>>> = None;
 
                 let mut buf = vec![0u8; config.max_mtu_size as usize];

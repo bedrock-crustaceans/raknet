@@ -125,7 +125,7 @@ impl RakServer {
                                     let _ = server.handle(RakServerInput::SetMaxConnections(n));
                                 }
                                 RakServerMsg::Adopt(session, reply) => {
-                                    server.adopt(session);
+                                    server.adopt(*session);
 
                                     if let Some(RakServerOutput::SessionConnected(session)) = server.poll() {
                                         let id = session.id;
@@ -225,7 +225,7 @@ impl RakServer {
         let (tx, rx) = tokio::sync::oneshot::channel();
 
         msg_tx
-            .send(RakServerMsg::Adopt(session, tx))
+            .send(RakServerMsg::Adopt(Box::new(session), tx))
             .map_err(|_| RakServerError::Closed)?;
 
         rx.await.map_err(|_| RakServerError::Closed)
