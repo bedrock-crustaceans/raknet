@@ -7,12 +7,14 @@ pub struct RakServerConfig {
     pub guid: u64,
     pub protocols: Box<[u8]>,
     pub max_connections: usize,
+    pub max_pending_connections: usize,
     pub message: Box<[u8]>,
     pub min_mtu_size: u16,
     pub max_mtu_size: u16,
     pub packet_limit: i32,
     pub total_packet_limit: i32,
     pub security: bool,
+    pub cookies: bool,
     pub require_dialled_port: bool,
 }
 
@@ -23,12 +25,14 @@ impl Default for RakServerConfig {
             guid: random(),
             protocols: Box::new([constants::PROTOCOL]),
             max_connections: 10,
+            max_pending_connections: constants::MAX_PENDING_CONNECTIONS,
             message: Box::new([]),
             min_mtu_size: constants::MIN_MTU_SIZE,
             max_mtu_size: constants::MAX_MTU_SIZE,
             packet_limit: constants::PACKET_LIMIT,
             total_packet_limit: constants::TOTAL_PACKET_LIMIT,
             security: false,
+            cookies: true,
             require_dialled_port: true,
         }
     }

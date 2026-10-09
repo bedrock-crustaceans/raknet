@@ -30,16 +30,19 @@ use crate::util::socket_addr::get_overhead;
 use crate::util::{constants, flags, packet_id};
 use config::RakServerConfig;
 use output::RakServerOutput;
+use rand::random;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
+use std::hash::{BuildHasher, RandomState};
 use std::io::Cursor;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::debug;
 
 const RECENTLY_CONNECTED_COOLDOWN: Duration = Duration::from_millis(5000);
 const OFFLINE_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(1);
 const PENDING_CONNECTION_TIMEOUT: Duration = Duration::from_millis(10_000);
+const COOKIE_ROTATION_INTERVAL: Duration = Duration::from_secs(2);
 
 pub struct RakServer {
     addr: SocketAddr,
@@ -53,7 +56,11 @@ pub struct RakServer {
 
     offline_window: SystemTime,
     offline_total: i32,
-    offline_per_ip: HashMap<SocketAddr, i32>,
+    offline_per_ip: HashMap<IpAddr, i32>,
+
+    cookie_key: RandomState,
+    cookie_salts: [u64; 2],
+    cookie_rotated: SystemTime,
 
     output: VecDeque<RakServerOutput>,
 }
@@ -94,7 +101,10 @@ impl Sans for RakServer {
                             < RECENTLY_CONNECTED_COOLDOWN
                     });
             }
-            RakServerInput::Update(now) => self.evict_stale_temp_sessions(now),
+            RakServerInput::Update(now) => {
+                self.rotate_cookie_salt(now);
+                self.evict_stale_temp_sessions(now);
+            }
         };
         Ok(())
     }
@@ -120,6 +130,10 @@ impl RakServer {
             offline_total: 0,
             offline_per_ip: HashMap::new(),
 
+            cookie_key: RandomState::new(),
+            cookie_salts: [random(), random()],
+            cookie_rotated: SystemTime::UNIX_EPOCH,
+
             output: VecDeque::new(),
         }
     }
@@ -144,6 +158,53 @@ impl RakServer {
             .push_back(RakServerOutput::SessionConnected(Box::new(session)));
     }
 
+    fn rotate_cookie_salt(&mut self, now: SystemTime) {
+        let elapsed = now.duration_since(self.cookie_rotated).unwrap_or_default();
+
+        if elapsed >= COOKIE_ROTATION_INTERVAL * 2 {
+            self.cookie_salts = [random(), random()];
+            self.cookie_rotated = now;
+        } else if elapsed >= COOKIE_ROTATION_INTERVAL {
+            self.cookie_salts = [random(), self.cookie_salts[0]];
+            self.cookie_rotated = now;
+        }
+    }
+
+    fn cookie(&self, salt: u64, addr: SocketAddr) -> i32 {
+        self.cookie_key
+            .hash_one((salt, addr.ip().to_canonical(), addr.port())) as i32
+    }
+
+    fn cookie_valid(&self, cookie: Option<i32>, addr: SocketAddr) -> bool {
+        cookie.is_some_and(|cookie| {
+            self.cookie_salts
+                .iter()
+                .any(|&salt| self.cookie(salt, addr) == cookie)
+        })
+    }
+
+    fn established_count(&self) -> usize {
+        self.session_map
+            .len()
+            .saturating_sub(self.session_temp.len())
+    }
+
+    fn forward_datagrams(&mut self, session: &mut RakSession) {
+        while let Some(msg) = session.poll() {
+            if let RakSessionOutput::Datagram(buf, addr) = msg {
+                self.output
+                    .push_back(RakServerOutput::SocketDatagram(buf, addr));
+            }
+        }
+    }
+
+    fn forget(&mut self, addr: SocketAddr) {
+        self.session_temp.remove(&addr);
+        if let Some(id) = self.session_map.remove(&addr) {
+            self.session_addr.remove(&id);
+        }
+    }
+
     fn rate_limited(&mut self, addr: SocketAddr, now: SystemTime) -> bool {
         if now.duration_since(self.offline_window).unwrap_or_default() >= OFFLINE_RATE_LIMIT_WINDOW
         {
@@ -157,7 +218,10 @@ impl RakServer {
             return true;
         }
 
-        let count = self.offline_per_ip.entry(addr).or_insert(0);
+        let count = self
+            .offline_per_ip
+            .entry(addr.ip().to_canonical())
+            .or_insert(0);
         *count += 1;
 
         *count > self.config.packet_limit
@@ -176,10 +240,7 @@ impl RakServer {
         for addr in stale {
             debug!("evicting stale pending connection from {}", addr);
 
-            self.session_temp.remove(&addr);
-            if let Some(id) = self.session_map.remove(&addr) {
-                self.session_addr.remove(&id);
-            }
+            self.forget(addr);
         }
     }
 
@@ -218,8 +279,11 @@ impl RakServer {
         addr: SocketAddr,
         now: SystemTime,
     ) -> Result<(), RakServerError> {
+        let full = self.established_count() >= self.config.max_connections;
+
         if let Entry::Occupied(mut entry) = self.session_temp.entry(addr) {
             let mut success = false;
+            let mut closed = false;
 
             let (_, session) = entry.get_mut();
 
@@ -259,12 +323,31 @@ impl RakServer {
                             }
                         }
                     }
-                    _ => {}
+                    RakSessionOutput::Disconnected(..) => closed = true,
+                    RakSessionOutput::Wait(_) => {}
                 }
             }
 
+            if closed {
+                debug!("pending connection from {} closed during handshake", addr);
+
+                entry.remove();
+                self.forget(addr);
+                return Ok(());
+            }
+
             if success {
-                let (_, session) = entry.remove();
+                let (_, mut session) = entry.remove();
+
+                if full {
+                    debug!("dropping connection from {} due to max connections", addr);
+
+                    session.handle(RakSessionInput::Disconnect(now))?;
+                    self.forward_datagrams(&mut session);
+                    self.forget(addr);
+                    return Ok(());
+                }
+
                 self.output
                     .push_back(RakServerOutput::SessionConnected(Box::new(session)));
             }
@@ -352,9 +435,14 @@ impl RakServer {
             return Ok(());
         }
 
+        self.rotate_cookie_salt(now);
+
         let reply = OpenConnectionReply1 {
             guid: self.config.guid,
-            cookie: None,
+            cookie: self
+                .config
+                .cookies
+                .then(|| self.cookie(self.cookie_salts[0], addr)),
             mtu: (request.mtu + constants::UDP_HEADER_SIZE + get_overhead(&addr))
                 .clamp(self.config.min_mtu_size, self.config.max_mtu_size),
         };
@@ -376,6 +464,18 @@ impl RakServer {
         now: SystemTime,
     ) -> Result<(), RakServerError> {
         let request = OpenConnectionRequest2::deserialize(cursor)?;
+
+        if self.config.cookies {
+            self.rotate_cookie_salt(now);
+
+            if !self.cookie_valid(request.cookie, addr) {
+                debug!(
+                    "ignoring connection request from {} with an invalid cookie",
+                    addr
+                );
+                return Ok(());
+            }
+        }
 
         if self.config.require_dialled_port && request.addr.port() != self.addr.port() {
             return Err(RakServerError::RefusingConnection(format!(
@@ -413,7 +513,9 @@ impl RakServer {
             return Ok(());
         }
 
-        if self.session_map.len() >= self.config.max_connections {
+        if self.established_count() >= self.config.max_connections
+            || self.session_temp.len() >= self.config.max_pending_connections
+        {
             debug!("refusing connection from {} due to max connections", addr);
 
             let full = NoFreeIncomingConnections {
@@ -531,9 +633,22 @@ mod tests {
         buf.into_boxed_slice()
     }
 
-    fn request_2(server_addr: SocketAddr, client: u64) -> Box<[u8]> {
+    fn reply_cookie(server: &mut RakServer) -> Option<i32> {
+        drain(server).into_iter().find_map(|out| match out {
+            RakServerOutput::SocketDatagram(buf, _)
+                if buf.first() == Some(&packet_id::OPEN_CONNECTION_REPLY_1) =>
+            {
+                OpenConnectionReply1::deserialize(&mut buf.as_ref())
+                    .unwrap()
+                    .cookie
+            }
+            _ => None,
+        })
+    }
+
+    fn request_2(server_addr: SocketAddr, client: u64, cookie: Option<i32>) -> Box<[u8]> {
         let req = OpenConnectionRequest2 {
-            cookie: None,
+            cookie,
             addr: server_addr,
             mtu: constants::MIN_MTU_SIZE,
             client,
@@ -541,6 +656,355 @@ mod tests {
         let mut buf = Vec::with_capacity(req.size_hint());
         req.serialize(&mut buf).unwrap();
         buf.into_boxed_slice()
+    }
+
+    use crate::client::RakClient;
+    use crate::client::config::RakClientConfig;
+    use crate::client::input::RakClientInput;
+    use crate::client::output::RakClientOutput;
+
+    fn connect_all(
+        server: &mut RakServer,
+        server_addr: SocketAddr,
+        client_addrs: &[SocketAddr],
+        now: SystemTime,
+    ) -> Vec<RakSession> {
+        let mut clients: Vec<(SocketAddr, Option<RakClient>)> = client_addrs
+            .iter()
+            .map(|&addr| {
+                let mut client = RakClient::new(RakClientConfig::default());
+                client
+                    .handle(RakClientInput::Connect(server_addr, now))
+                    .unwrap();
+                (addr, Some(client))
+            })
+            .collect();
+
+        let mut connected = Vec::new();
+        loop {
+            let mut sent = false;
+            for (addr, client) in &mut clients {
+                let Some(client) = client else { continue };
+                while let Some(out) = client.poll() {
+                    if let RakClientOutput::SocketDatagram(buf, _) = out {
+                        sent = true;
+                        let _ = server.handle(RakServerInput::Datagram(buf, *addr, now));
+                    }
+                }
+            }
+            if !sent {
+                return connected;
+            }
+
+            for out in drain(server) {
+                match out {
+                    RakServerOutput::SocketDatagram(buf, to) => {
+                        let Some((_, slot)) = clients.iter_mut().find(|(addr, _)| *addr == to)
+                        else {
+                            continue;
+                        };
+                        if let Some(client) = slot
+                            && client
+                                .handle(RakClientInput::Datagram(buf, server_addr, now))
+                                .is_err()
+                        {
+                            *slot = None;
+                        }
+                    }
+                    RakServerOutput::SessionConnected(session) => connected.push(*session),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    fn connect(
+        server: &mut RakServer,
+        server_addr: SocketAddr,
+        client_addr: SocketAddr,
+        now: SystemTime,
+    ) -> Option<RakSession> {
+        connect_all(server, server_addr, &[client_addr], now).pop()
+    }
+
+    fn open_pending(server: &mut RakServer, server_addr: SocketAddr, client_addr: SocketAddr) {
+        let now = SystemTime::now();
+        server
+            .handle(RakServerInput::Datagram(
+                request_1(constants::PROTOCOL),
+                client_addr,
+                now,
+            ))
+            .unwrap();
+        let cookie = reply_cookie(server);
+        server
+            .handle(RakServerInput::Datagram(
+                request_2(server_addr, 1, cookie),
+                client_addr,
+                now,
+            ))
+            .unwrap();
+    }
+
+    #[test]
+    fn a_client_completes_the_handshake() {
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let mut server = RakServer::new(RakServerConfig::default(), server_addr);
+
+        let session = connect(
+            &mut server,
+            server_addr,
+            "127.0.0.1:2".parse().unwrap(),
+            SystemTime::now(),
+        );
+
+        assert!(session.is_some());
+    }
+
+    #[test]
+    fn pending_handshakes_do_not_use_up_connection_slots() {
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let mut server = RakServer::new(
+            RakServerConfig {
+                max_connections: 1,
+                ..Default::default()
+            },
+            server_addr,
+        );
+
+        open_pending(&mut server, server_addr, "127.0.0.1:1".parse().unwrap());
+        drain(&mut server);
+
+        let session = connect(
+            &mut server,
+            server_addr,
+            "127.0.0.1:2".parse().unwrap(),
+            SystemTime::now(),
+        );
+
+        assert!(
+            session.is_some(),
+            "a half-open handshake must not take the only connection slot"
+        );
+    }
+
+    #[test]
+    fn pending_handshakes_are_capped() {
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let mut server = RakServer::new(
+            RakServerConfig {
+                max_pending_connections: 1,
+                ..Default::default()
+            },
+            server_addr,
+        );
+
+        open_pending(&mut server, server_addr, "127.0.0.1:1".parse().unwrap());
+        drain(&mut server);
+        open_pending(&mut server, server_addr, "127.0.0.1:2".parse().unwrap());
+
+        let outputs = drain(&mut server);
+        assert!(
+            outputs
+                .iter()
+                .any(|o| first_byte(o) == Some(packet_id::NO_FREE_INCOMING_CONNECTIONS))
+        );
+        assert_eq!(server.session_temp.len(), 1);
+    }
+
+    #[test]
+    fn established_connections_never_exceed_max() {
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let mut server = RakServer::new(
+            RakServerConfig {
+                max_connections: 1,
+                ..Default::default()
+            },
+            server_addr,
+        );
+        let now = SystemTime::now();
+
+        let clients = [
+            "127.0.0.1:1".parse().unwrap(),
+            "127.0.0.1:2".parse().unwrap(),
+        ];
+
+        let sessions = connect_all(&mut server, server_addr, &clients, now);
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(server.established_count(), 1);
+        assert!(server.session_temp.is_empty());
+    }
+
+    #[test]
+    fn pending_session_closed_during_handshake_frees_its_slot() {
+        use crate::protocol::packets::frame_set::FrameSet;
+        use crate::protocol::types::frame::Frame;
+
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let client_addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let mut server = RakServer::new(RakServerConfig::default(), server_addr);
+
+        open_pending(&mut server, server_addr, client_addr);
+        drain(&mut server);
+
+        let mut frame = Frame::new(RakReliability::ReliableOrdered, Box::new([0xFE]));
+        frame.order_index = 100_000;
+        let set = FrameSet::new(0, vec![frame], false, true, false);
+        let mut buf = Vec::with_capacity(set.size_hint());
+        set.serialize(&mut buf).unwrap();
+
+        server
+            .handle(RakServerInput::Datagram(
+                buf.into_boxed_slice(),
+                client_addr,
+                SystemTime::now(),
+            ))
+            .unwrap();
+
+        assert!(!server.session_temp.contains_key(&client_addr));
+        assert!(!server.session_map.contains_key(&client_addr));
+    }
+
+    fn cookie_for(server: &mut RakServer, client_addr: SocketAddr, now: SystemTime) -> Option<i32> {
+        server
+            .handle(RakServerInput::Datagram(
+                request_1(constants::PROTOCOL),
+                client_addr,
+                now,
+            ))
+            .unwrap();
+        reply_cookie(server)
+    }
+
+    fn accepts_request_2(
+        server: &mut RakServer,
+        server_addr: SocketAddr,
+        client_addr: SocketAddr,
+        cookie: Option<i32>,
+        now: SystemTime,
+    ) -> bool {
+        server
+            .handle(RakServerInput::Datagram(
+                request_2(server_addr, 1, cookie),
+                client_addr,
+                now,
+            ))
+            .unwrap();
+        drain(server)
+            .iter()
+            .any(|o| first_byte(o) == Some(packet_id::OPEN_CONNECTION_REPLY_2))
+            && server.session_temp.contains_key(&client_addr)
+    }
+
+    #[test]
+    fn reply_1_carries_a_cookie_by_default() {
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let mut server = RakServer::new(RakServerConfig::default(), server_addr);
+
+        let cookie = cookie_for(
+            &mut server,
+            "127.0.0.1:1".parse().unwrap(),
+            SystemTime::now(),
+        );
+
+        assert!(cookie.is_some());
+    }
+
+    #[test]
+    fn request_2_without_a_cookie_is_ignored() {
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let client_addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let mut server = RakServer::new(RakServerConfig::default(), server_addr);
+        let now = SystemTime::now();
+
+        cookie_for(&mut server, client_addr, now);
+
+        assert!(!accepts_request_2(
+            &mut server,
+            server_addr,
+            client_addr,
+            None,
+            now
+        ));
+    }
+
+    #[test]
+    fn request_2_with_another_addresses_cookie_is_ignored() {
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let client_addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let spoofed_addr: SocketAddr = "127.0.0.2:1".parse().unwrap();
+        let mut server = RakServer::new(RakServerConfig::default(), server_addr);
+        let now = SystemTime::now();
+
+        let cookie = cookie_for(&mut server, client_addr, now);
+
+        assert!(!accepts_request_2(
+            &mut server,
+            server_addr,
+            spoofed_addr,
+            cookie,
+            now
+        ));
+        assert!(accepts_request_2(
+            &mut server,
+            server_addr,
+            client_addr,
+            cookie,
+            now
+        ));
+    }
+
+    #[test]
+    fn cookie_survives_one_rotation_but_not_two() {
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let mut server = RakServer::new(RakServerConfig::default(), server_addr);
+        let now = SystemTime::now();
+
+        let recent: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let cookie = cookie_for(&mut server, recent, now);
+        let later = now + COOKIE_ROTATION_INTERVAL + COOKIE_ROTATION_INTERVAL / 2;
+        assert!(accepts_request_2(
+            &mut server,
+            server_addr,
+            recent,
+            cookie,
+            later
+        ));
+
+        let stale: SocketAddr = "127.0.0.1:2".parse().unwrap();
+        let cookie = cookie_for(&mut server, stale, later);
+        let much_later = later + COOKIE_ROTATION_INTERVAL * 2;
+        assert!(!accepts_request_2(
+            &mut server,
+            server_addr,
+            stale,
+            cookie,
+            much_later
+        ));
+    }
+
+    #[test]
+    fn cookies_can_be_disabled() {
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let client_addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let mut server = RakServer::new(
+            RakServerConfig {
+                cookies: false,
+                ..Default::default()
+            },
+            server_addr,
+        );
+        let now = SystemTime::now();
+
+        assert_eq!(cookie_for(&mut server, client_addr, now), None);
+        assert!(accepts_request_2(
+            &mut server,
+            server_addr,
+            client_addr,
+            None,
+            now
+        ));
     }
 
     #[test]
@@ -575,6 +1039,37 @@ mod tests {
     }
 
     #[test]
+    fn rate_limit_is_shared_by_every_port_of_an_ip() {
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+
+        let mut server = RakServer::new(
+            RakServerConfig {
+                packet_limit: 2,
+                ..Default::default()
+            },
+            server_addr,
+        );
+
+        let ping = UnconnectedPing {
+            timestamp: 0,
+            client: 1,
+        };
+        let mut buf = Vec::with_capacity(ping.size_hint());
+        ping.serialize(&mut buf).unwrap();
+        let buf = buf.into_boxed_slice();
+
+        let now = SystemTime::now();
+        for port in 1..=5 {
+            let client_addr = SocketAddr::from(([127, 0, 0, 1], port));
+            server
+                .handle(RakServerInput::Datagram(buf.clone(), client_addr, now))
+                .unwrap();
+        }
+
+        assert_eq!(drain(&mut server).len(), 2);
+    }
+
+    #[test]
     fn already_connected_reply_on_duplicate_request() {
         let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
         let client_addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
@@ -589,11 +1084,11 @@ mod tests {
                 now,
             ))
             .unwrap();
-        drain(&mut server);
+        let cookie = reply_cookie(&mut server);
 
         server
             .handle(RakServerInput::Datagram(
-                request_2(server_addr, 1),
+                request_2(server_addr, 1, cookie),
                 client_addr,
                 now,
             ))
@@ -602,7 +1097,7 @@ mod tests {
 
         server
             .handle(RakServerInput::Datagram(
-                request_2(server_addr, 1),
+                request_2(server_addr, 1, cookie),
                 client_addr,
                 now,
             ))
@@ -631,11 +1126,11 @@ mod tests {
                 now,
             ))
             .unwrap();
-        drain(&mut server);
+        let cookie = reply_cookie(&mut server);
 
         server
             .handle(RakServerInput::Datagram(
-                request_2(server_addr, 1),
+                request_2(server_addr, 1, cookie),
                 client_addr,
                 now,
             ))
@@ -760,11 +1255,11 @@ mod tests {
                 now,
             ))
             .unwrap();
-        drain(&mut server);
+        let cookie = reply_cookie(&mut server);
 
         server
             .handle(RakServerInput::Datagram(
-                request_2(server_addr, 1),
+                request_2(server_addr, 1, cookie),
                 client_addr,
                 now,
             ))
