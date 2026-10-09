@@ -12,6 +12,7 @@ pub struct RakSession {
     pub(crate) msg_tx: UnboundedSender<RakSessionMsg>,
     pub(crate) buf_rx: UnboundedReceiver<Box<[u8]>>,
     pub(crate) addr: SocketAddr,
+    pub(crate) max_message_len: usize,
 }
 
 impl RakSession {
@@ -26,6 +27,7 @@ impl RakSession {
 
         let addr = session.addr;
         let id = session.id;
+        let max_message_len = session.max_message_len();
 
         tokio::spawn(async move {
             let mut msg_rx = msg_rx;
@@ -97,6 +99,7 @@ impl RakSession {
                 msg_tx,
                 buf_rx,
                 addr,
+                max_message_len,
             },
             tx,
         )
@@ -149,6 +152,10 @@ impl RakSession {
         self.addr
     }
 
+    pub fn max_message_len(&self) -> usize {
+        self.max_message_len
+    }
+
     /// Captures this session's protocol state for [`crate::server::RakServer::adopt`].
     ///
     /// The live task keeps running - shutting it down once the target has taken over is
@@ -159,5 +166,27 @@ impl RakSession {
             .send(RakSessionMsg::Snapshot(tx))
             .map_err(|_| RakSessionError::Closed)?;
         rx.await.map_err(|_| RakSessionError::Closed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn max_message_len_comes_from_the_session_config() {
+        let session = RakSessionIntl::new(
+            RakSessionId(0),
+            "127.0.0.1:19132".parse().unwrap(),
+            0,
+            1492,
+            |conf| conf.max_queued_bytes = 1 << 20,
+        );
+        let (datagram_tx, _datagram_rx) = unbounded_channel();
+        let (disconnect_tx, _disconnect_rx) = unbounded_channel();
+
+        let (session, _input_tx) = RakSession::spawn(session, datagram_tx, disconnect_tx);
+
+        assert_eq!(session.max_message_len(), 1 << 20);
     }
 }
