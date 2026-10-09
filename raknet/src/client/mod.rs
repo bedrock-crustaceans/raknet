@@ -321,13 +321,21 @@ impl RakClient {
     ) -> Result<(), RakClientError> {
         let reply = OpenConnectionReply1::deserialize(buf)?;
 
-        self.mtu = reply.mtu;
+        self.mtu = self.negotiated_mtu(reply.mtu)?;
         self.cookie = reply.cookie;
         self.state = RakClientState::Handshake2(addr);
 
         self.send_open_connection_request_2(addr)?;
 
         Ok(())
+    }
+
+    fn negotiated_mtu(&self, mtu: u16) -> Result<u16, RakClientError> {
+        if mtu < self.config.min_mtu_size.max(constants::MIN_MTU_SIZE) {
+            debug!("RakClient refusing server mtu size of {}", mtu);
+            return Err(RakClientError::InvalidMtu(mtu));
+        }
+        Ok(mtu.min(self.config.max_mtu_size))
     }
 
     fn send_open_connection_request_2(&mut self, addr: SocketAddr) -> Result<(), RakClientError> {
@@ -361,7 +369,7 @@ impl RakClient {
             return Err(RakClientError::SecurityUnsupported);
         }
 
-        self.mtu = reply.mtu;
+        self.mtu = self.negotiated_mtu(reply.mtu)?;
         self.state = RakClientState::HandshakeCompleted(addr);
 
         debug!(
@@ -566,5 +574,82 @@ mod tests {
             .handle(RakClientInput::Connect(addr, SystemTime::now()))
             .unwrap();
         assert!(matches!(client.state, RakClientState::Handshake1(_)));
+    }
+
+    fn encoded(packet: impl RakCodec) -> Box<[u8]> {
+        let mut buf = Vec::with_capacity(packet.size_hint());
+        packet.serialize(&mut buf).unwrap();
+        buf.into_boxed_slice()
+    }
+
+    fn reply_1(mtu: u16) -> Box<[u8]> {
+        encoded(OpenConnectionReply1 {
+            guid: 1,
+            cookie: None,
+            mtu,
+        })
+    }
+
+    fn reply_2(addr: SocketAddr, mtu: u16) -> Box<[u8]> {
+        encoded(OpenConnectionReply2::new(1, addr, mtu, false))
+    }
+
+    #[test]
+    fn reply_1_below_the_minimum_mtu_is_rejected() {
+        let mut client = RakClient::new(RakClientConfig::default());
+        let addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        client.state = RakClientState::Handshake1(addr);
+
+        let result = client.handle(RakClientInput::Datagram(
+            reply_1(20),
+            addr,
+            SystemTime::now(),
+        ));
+
+        assert!(
+            matches!(result, Err(RakClientError::InvalidMtu(20))),
+            "got {result:?}"
+        );
+    }
+
+    #[test]
+    fn reply_2_below_the_minimum_mtu_is_rejected() {
+        let mut client = RakClient::new(RakClientConfig::default());
+        let addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        client.state = RakClientState::Handshake2(addr);
+
+        let result = client.handle(RakClientInput::Datagram(
+            reply_2(addr, 20),
+            addr,
+            SystemTime::now(),
+        ));
+
+        assert!(
+            matches!(result, Err(RakClientError::InvalidMtu(20))),
+            "got {result:?}"
+        );
+        assert!(client.session.is_none());
+    }
+
+    #[test]
+    fn reply_2_above_the_maximum_mtu_is_clamped() {
+        let mut client = RakClient::new(RakClientConfig::default());
+        let addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        client.state = RakClientState::Handshake2(addr);
+
+        client
+            .handle(RakClientInput::Datagram(
+                reply_2(addr, u16::MAX),
+                addr,
+                SystemTime::now(),
+            ))
+            .unwrap();
+
+        assert_eq!(client.mtu, constants::MAX_MTU_SIZE);
+        while let Some(out) = client.poll() {
+            if let RakClientOutput::SocketDatagram(buf, _) = out {
+                assert!(buf.len() <= constants::MAX_MTU_SIZE as usize);
+            }
+        }
     }
 }
