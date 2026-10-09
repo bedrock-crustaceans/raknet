@@ -417,6 +417,12 @@ impl RakSession {
         self.congestion_controller.rtt()
     }
 
+    pub fn max_message_len(&self) -> usize {
+        usize::try_from(self.config.max_queued_bytes)
+            .unwrap_or(0)
+            .max(self.mtu as usize)
+    }
+
     fn handle_timeout(&mut self, now: SystemTime) -> Result<(), RakSessionError> {
         if now >= self.last_recv + SESSION_TIMEOUT {
             debug!(
@@ -1257,6 +1263,35 @@ mod tests {
     }
 
     #[test]
+    fn max_message_len_is_the_queued_byte_budget() {
+        let session = RakSession::new(
+            RakSessionId(0),
+            "127.0.0.1:19132".parse().unwrap(),
+            0,
+            crate::util::constants::MAX_MTU_SIZE,
+            |_| {},
+        );
+
+        assert_eq!(
+            session.max_message_len(),
+            crate::util::constants::MAX_QUEUED_BYTES as usize
+        );
+    }
+
+    #[test]
+    fn max_message_len_is_at_least_one_unsplit_frame() {
+        let session = RakSession::new(
+            RakSessionId(0),
+            "127.0.0.1:19132".parse().unwrap(),
+            0,
+            crate::util::constants::MAX_MTU_SIZE,
+            |conf| conf.max_queued_bytes = 4,
+        );
+
+        assert_eq!(session.max_message_len(), session.mtu as usize);
+    }
+
+    #[test]
     fn honors_configured_ordering_channels() {
         let mut session = RakSession::new(
             RakSessionId(0),
@@ -1822,5 +1857,54 @@ mod tests {
 
         assert_eq!(session.inbound_spl_queue[&1].len(), 2);
         assert_eq!(session.inbound_spl_bytes, 2);
+    }
+
+    #[test]
+    fn large_sends_split_into_datagrams_within_the_mtu() {
+        let reliabilities = [
+            RakReliability::Unreliable,
+            RakReliability::UnreliableSequenced,
+            RakReliability::Reliable,
+            RakReliability::ReliableOrdered,
+            RakReliability::ReliableSequenced,
+            RakReliability::UnreliableWithAckReceipt,
+            RakReliability::ReliableWithAckReceipt,
+            RakReliability::ReliableOrderedWithAckReceipt,
+        ];
+        let now = SystemTime::now();
+
+        for mtu in crate::util::constants::MTU_SIZES {
+            for reliability in reliabilities {
+                let mut session = RakSession::new(
+                    RakSessionId(0),
+                    "[::1]:19132".parse().unwrap(),
+                    0,
+                    mtu,
+                    |_| {},
+                );
+                for priority in [RakPriority::Immediate, RakPriority::Normal] {
+                    session
+                        .handle(RakSessionInput::Send(
+                            vec![0xFE; 64 * 1024].into_boxed_slice(),
+                            reliability,
+                            priority,
+                            now,
+                        ))
+                        .unwrap();
+                }
+                session.tick(now).unwrap();
+
+                let max = session.mtu as usize;
+                for out in std::iter::from_fn(|| session.poll()) {
+                    if let RakSessionOutput::Datagram(buf, _) = out {
+                        assert!(
+                            buf.len() <= max,
+                            "{reliability:?} at mtu {mtu} sent {} bytes",
+                            buf.len()
+                        );
+                    }
+                }
+            }
+        }
     }
 }
