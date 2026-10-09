@@ -23,7 +23,7 @@ impl Ack {
         sequences.dedup();
         Self { is_nack, sequences }
     }
-    
+
     pub fn split(sequences: Vec<u32>, is_nack: bool, max_size: usize) -> Vec<Self> {
         let sequences = Self::new(sequences, is_nack).sequences;
 
