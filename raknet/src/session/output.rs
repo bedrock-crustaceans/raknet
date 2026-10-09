@@ -15,4 +15,5 @@ pub enum RakDisconnectReason {
     Requested,
     Timeout,
     Remote,
+    ProtocolViolation,
 }

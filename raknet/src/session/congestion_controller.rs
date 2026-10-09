@@ -1,4 +1,5 @@
 use crate::util::constants::{CC_ADDITIONAL_VARIANCE, CC_MAX_THRESHOLD};
+use crate::util::u24;
 use std::cmp::max;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
@@ -176,7 +177,7 @@ impl RakCongestionController {
 
             if self
                 .congestion_recovery_sequence
-                .is_some_and(|rec_seq| seq > rec_seq)
+                .is_some_and(|rec_seq| u24::distance(rec_seq, seq) > 0)
             {
                 self.congestion_recovery_sequence = None;
             }
