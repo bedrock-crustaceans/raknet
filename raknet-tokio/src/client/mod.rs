@@ -19,6 +19,24 @@ use tokio::sync::oneshot;
 use tokio::time::{Instant, sleep, sleep_until};
 use tracing::debug;
 
+fn fail_pending_connect(
+    client: &RakClientIntl,
+    connect: &mut Option<oneshot::Sender<Result<RakSession, RakClientError>>>,
+    result: Result<(), RakClientError>,
+) {
+    let Err(e) = result else {
+        return;
+    };
+
+    debug!("client failed to handle input: {e}");
+
+    if !client.is_connecting()
+        && let Some(sender) = connect.take()
+    {
+        let _ = sender.send(Err(e));
+    }
+}
+
 pub struct RakClient {
     state: RakClientState,
 }
@@ -71,10 +89,8 @@ impl RakClient {
                         Ok((len, addr)) = socket.recv_from(&mut buf) => {
                             let now = SystemTime::now();
 
-                            match client.handle(RakClientInput::Datagram(buf[..len].into(), addr, now)) {
-                                Ok(_) => {},
-                                Err(e) => debug!("server failed to handle inbound datagram: {e}")
-                            }
+                            let result = client.handle(RakClientInput::Datagram(buf[..len].into(), addr, now));
+                            fail_pending_connect(&client, &mut connect, result);
                         }
                         Some((buf, addr)) = dgram_rx.recv() => {
                             let _ = socket.send_to(buf.as_ref(), addr).await;
@@ -92,9 +108,12 @@ impl RakClient {
                                     pings.entry(addr).or_default().push_back((sender, now));
                                 }
                                 RakClientMsg::Connect(addr, sender) => {
-                                    let _ = client.handle(RakClientInput::Connect(addr, now));
-
-                                    connect = Some(sender);
+                                    match client.handle(RakClientInput::Connect(addr, now)) {
+                                        Ok(()) => connect = Some(sender),
+                                        Err(e) => {
+                                            let _ = sender.send(Err(e));
+                                        }
+                                    }
                                 }
                                 RakClientMsg::Adopt(snapshot, reply) => {
                                     match RakSessionIntl::restore(*snapshot) {
@@ -119,7 +138,8 @@ impl RakClient {
                             }
                         }
                         _ = &mut timer => {
-                            let _ = client.handle(RakClientInput::Update(SystemTime::now()));
+                            let result = client.handle(RakClientInput::Update(SystemTime::now()));
+                            fail_pending_connect(&client, &mut connect, result);
                         }
                         _ = async {
                             match stop_deadline {

@@ -74,7 +74,7 @@ impl Sans for RakClient {
             }
             RakClientInput::Connect(remote, now) => {
                 if !matches!(self.state, RakClientState::Unconnected) {
-                    return Ok(());
+                    return Err(RakClientError::AlreadyConnected);
                 }
 
                 self.state = RakClientState::Handshake1(remote);
@@ -93,6 +93,7 @@ impl Sans for RakClient {
                     }
 
                     let mut success: Option<bool> = None;
+                    let mut session_closed = false;
                     match self.session.as_mut() {
                         Some(session) => {
                             session.handle(RakSessionInput::Datagram(buf, now))?;
@@ -130,11 +131,16 @@ impl Sans for RakClient {
                                             }
                                         }
                                     }
-                                    _ => {}
+                                    RakSessionOutput::Disconnected(..) => session_closed = true,
+                                    RakSessionOutput::Wait(_) => {}
                                 }
                             }
                         }
                         None => self.output.push_back(RakClientOutput::SessionDatagram(buf)),
+                    }
+
+                    if session_closed && success.is_none() {
+                        return Err(self.abort(RakClientError::ConnectionFailed));
                     }
 
                     if let Some(succeeded) = success
@@ -146,7 +152,7 @@ impl Sans for RakClient {
                                 .push_back(RakClientOutput::SessionConnected(Box::new(session))),
                             false => {
                                 debug!("connection attempt failed");
-                                return Err(RakClientError::ConnectionAttemptFailed);
+                                return Err(self.abort(RakClientError::ConnectionAttemptFailed));
                             }
                         }
                     }
@@ -172,39 +178,48 @@ impl Sans for RakClient {
 
                     if let Some(&b) = buf.first() {
                         let mut cursor = Cursor::new(buf.as_ref());
-                        match b {
+                        let replied = match b {
                             packet_id::OPEN_CONNECTION_REPLY_1 => {
-                                self.handle_open_connection_reply_1(remote, &mut cursor)?
+                                self.handle_open_connection_reply_1(remote, &mut cursor)
                             }
                             packet_id::OPEN_CONNECTION_REPLY_2 => {
-                                self.handle_open_connection_reply_2(remote, &mut cursor, now)?
+                                self.handle_open_connection_reply_2(remote, &mut cursor, now)
                             }
                             packet_id::INCOMPATIBLE_PROTOCOL => {
                                 debug!(
                                     "RakClient connection failed due to incompatible protocol version"
                                 );
-                                return Err(RakClientError::IncompatibleProtocol);
+                                return Err(self.abort(RakClientError::IncompatibleProtocol));
                             }
                             packet_id::ALREADY_CONNECTED => {
                                 debug!(
                                     "RakClient connection failed because this IP is already connected"
                                 );
-                                return Err(RakClientError::AlreadyConnected);
+                                return Err(self.abort(RakClientError::AlreadyConnected));
                             }
                             packet_id::NO_FREE_INCOMING_CONNECTIONS => {
                                 debug!(
                                     "RakClient connection failed because the server has no free connections"
                                 );
-                                return Err(RakClientError::NoFreeIncomingConnections);
+                                return Err(self.abort(RakClientError::NoFreeIncomingConnections));
                             }
                             packet_id::IP_RECENTLY_CONNECTED => {
                                 debug!(
                                     "RakClient connection failed because this IP recently connected"
                                 );
-                                return Err(RakClientError::RecentlyConnected);
+                                return Err(self.abort(RakClientError::RecentlyConnected));
                             }
-                            _ => {}
+                            _ => Ok(()),
+                        };
+
+                        if let Err(
+                            e @ (RakClientError::InvalidMtu(_)
+                            | RakClientError::SecurityUnsupported),
+                        ) = replied
+                        {
+                            return Err(self.abort(e));
                         }
+                        replied?;
                     }
                 }
             },
@@ -237,6 +252,22 @@ impl RakClient {
         }
     }
 
+    fn abort(&mut self, error: RakClientError) -> RakClientError {
+        self.state = RakClientState::Unconnected;
+        self.session = None;
+        self.output
+            .push_back(RakClientOutput::Wait(self.config.conn_attempt_interval));
+        error
+    }
+
+    pub fn is_connecting(&self) -> bool {
+        match self.state {
+            RakClientState::Handshake1(_) | RakClientState::Handshake2(_) => true,
+            RakClientState::HandshakeCompleted(_) => self.session.is_some(),
+            RakClientState::Unconnected => false,
+        }
+    }
+
     fn handle_timeout(&mut self, now: SystemTime) -> Result<(), RakClientError> {
         let connected =
             matches!(self.state, RakClientState::HandshakeCompleted(_)) && self.session.is_none();
@@ -252,7 +283,7 @@ impl RakClient {
                 "RakClient connection failed after {:?}",
                 self.config.conn_attempt_timeout
             );
-            return Err(RakClientError::ConnectionFailed);
+            return Err(self.abort(RakClientError::ConnectionFailed));
         }
 
         let mut session_wait = None;
@@ -268,7 +299,7 @@ impl RakClient {
                         .push_back(RakClientOutput::SocketDatagram(buf, addr)),
                     RakSessionOutput::Wait(duration) => session_wait = Some(duration),
                     RakSessionOutput::Disconnected(..) => {
-                        return Err(RakClientError::ConnectionFailed);
+                        return Err(self.abort(RakClientError::ConnectionFailed));
                     }
                     RakSessionOutput::Packet(_) => {}
                 }
@@ -299,7 +330,7 @@ impl RakClient {
                     "RakClient connection failed after {} attempts",
                     self.attempts
                 );
-                return Err(RakClientError::ConnectionFailed);
+                return Err(self.abort(RakClientError::ConnectionFailed));
             }
         }
 
@@ -588,9 +619,8 @@ mod tests {
 
         client.state = RakClientState::HandshakeCompleted(addr);
 
-        client
-            .handle(RakClientInput::Connect(addr, SystemTime::now()))
-            .unwrap();
+        let result = client.handle(RakClientInput::Connect(addr, SystemTime::now()));
+        assert!(matches!(result, Err(RakClientError::AlreadyConnected)));
         assert!(matches!(
             client.state,
             RakClientState::HandshakeCompleted(_)
@@ -708,6 +738,63 @@ mod tests {
         assert!(
             resent,
             "handshake session never resent the ConnectionRequest"
+        );
+    }
+
+    #[test]
+    fn failed_connect_resets_and_schedules_a_wait() {
+        let mut client = RakClient::new(RakClientConfig {
+            conn_attempt_timeout: Duration::from_millis(100),
+            ..RakClientConfig::default()
+        });
+        let addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let start = SystemTime::now();
+
+        client.handle(RakClientInput::Connect(addr, start)).unwrap();
+        last_wait(&mut client);
+
+        let result = client.handle(RakClientInput::Update(start + Duration::from_millis(200)));
+        assert!(matches!(result, Err(RakClientError::ConnectionFailed)));
+        assert!(last_wait(&mut client).is_some(), "no wait after failure");
+        assert!(matches!(client.state, RakClientState::Unconnected));
+        assert!(!client.is_connecting());
+
+        let again = client.handle(RakClientInput::Update(start + Duration::from_millis(300)));
+        assert!(again.is_ok(), "update after failure failed: {again:?}");
+    }
+
+    #[test]
+    fn incompatible_protocol_resets_state() {
+        let mut client = RakClient::new(RakClientConfig::default());
+        let addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let now = SystemTime::now();
+
+        client.handle(RakClientInput::Connect(addr, now)).unwrap();
+        last_wait(&mut client);
+
+        let result = client.handle(RakClientInput::Datagram(
+            vec![packet_id::INCOMPATIBLE_PROTOCOL].into(),
+            addr,
+            now,
+        ));
+
+        assert!(matches!(result, Err(RakClientError::IncompatibleProtocol)));
+        assert!(matches!(client.state, RakClientState::Unconnected));
+        assert!(last_wait(&mut client).is_some());
+    }
+
+    #[test]
+    fn connect_while_connecting_is_rejected() {
+        let mut client = RakClient::new(RakClientConfig::default());
+        let addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let now = SystemTime::now();
+
+        client.handle(RakClientInput::Connect(addr, now)).unwrap();
+        let result = client.handle(RakClientInput::Connect(addr, now));
+
+        assert!(
+            matches!(result, Err(RakClientError::AlreadyConnected)),
+            "got {result:?}"
         );
     }
 }
