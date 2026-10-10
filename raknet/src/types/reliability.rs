@@ -17,6 +17,7 @@ impl RakReliability {
             self,
             RakReliability::Reliable
                 | RakReliability::ReliableOrdered
+                | RakReliability::ReliableSequenced
                 | RakReliability::ReliableWithAckReceipt
                 | RakReliability::ReliableOrderedWithAckReceipt
         )

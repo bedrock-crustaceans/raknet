@@ -143,3 +143,28 @@ impl RakCodec for Frame {
             + self.payload.len()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn reliable_sequenced_frame_carries_message_index() {
+        let bytes = [
+            0x80, 0x00, 0x10, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x03, 0x00, 0x00, 0x07, 0xAB,
+            0xCD,
+        ];
+        let mut frame = Frame::new(RakReliability::ReliableSequenced, vec![0xAB, 0xCD].into());
+        frame.reliable_index = 1;
+        frame.sequence_index = 2;
+        frame.order_index = 3;
+        frame.order_channel = 7;
+
+        let mut encoded = Vec::new();
+        frame.serialize(&mut encoded).unwrap();
+        assert_eq!(encoded, bytes, "encoding differs from go-raknet");
+        assert_eq!(Frame::deserialize(&mut Cursor::new(&bytes)).unwrap(), frame);
+        assert_eq!(frame.size_hint(), bytes.len());
+    }
+}
