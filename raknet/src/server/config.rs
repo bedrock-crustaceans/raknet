@@ -33,7 +33,17 @@ impl Default for RakServerConfig {
             total_packet_limit: constants::TOTAL_PACKET_LIMIT,
             security: false,
             cookies: true,
-            require_dialled_port: true,
+            require_dialled_port: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dialled_port_is_not_required_by_default() {
+        assert!(!RakServerConfig::default().require_dialled_port);
     }
 }
