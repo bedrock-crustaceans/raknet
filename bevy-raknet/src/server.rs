@@ -210,6 +210,10 @@ impl RakServer {
             }
         }
 
+        if let Err(e) = self.intl.handle(RakServerInput::Update(now)) {
+            debug!("server failed to update: {e}");
+        }
+
         while let Some(output) = self.intl.poll() {
             match output {
                 RakServerOutput::SocketDatagram(buf, addr) => {

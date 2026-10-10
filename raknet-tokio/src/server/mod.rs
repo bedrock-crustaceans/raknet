@@ -9,6 +9,7 @@ use crate::session::RakSession;
 use raknet::prelude::{
     RakServer as RakServerIntl, RakServerConfig, RakServerInput, RakServerOutput,
     RakSession as RakSessionIntl, RakSessionId, RakSessionInput, RakSessionSnapshot, Sans,
+    constants,
 };
 use state::{Initialized, Running};
 use std::collections::HashMap;
@@ -16,7 +17,7 @@ use std::net::SocketAddr;
 use std::time::{Duration, SystemTime};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
-use tokio::time::interval;
+use tokio::time::{MissedTickBehavior, interval};
 use tracing::debug;
 
 pub struct RakServer {
@@ -90,7 +91,10 @@ impl RakServer {
                 let (dgram_tx, mut dgram_rx) = unbounded_channel::<(Box<[u8]>, SocketAddr)>();
                 let (disconnect_tx, mut disconnect_rx) = unbounded_channel::<RakSessionId>();
 
-                let mut update_interval = interval(Duration::from_secs(1));
+                let mut update_interval = interval(Duration::from_millis(
+                    constants::AUTOFLUSH_INTERVAL_MS as u64,
+                ));
+                update_interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
                 loop {
                     tokio::select! {

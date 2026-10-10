@@ -104,6 +104,7 @@ impl Sans for RakServer {
             RakServerInput::Update(now) => {
                 self.rotate_cookie_salt(now);
                 self.evict_stale_temp_sessions(now);
+                self.tick_temp_sessions(now)?;
             }
         };
         Ok(())
@@ -225,6 +226,29 @@ impl RakServer {
         *count += 1;
 
         *count > self.config.packet_limit
+    }
+
+    fn tick_temp_sessions(&mut self, now: SystemTime) -> Result<(), RakServerError> {
+        let mut closed = Vec::new();
+
+        for (&addr, (_, session)) in self.session_temp.iter_mut() {
+            session.handle(RakSessionInput::Update(now))?;
+
+            while let Some(msg) = session.poll() {
+                match msg {
+                    RakSessionOutput::Datagram(buf, to) => self
+                        .output
+                        .push_back(RakServerOutput::SocketDatagram(buf, to)),
+                    RakSessionOutput::Disconnected(..) => closed.push(addr),
+                    _ => {}
+                }
+            }
+        }
+
+        for addr in closed {
+            self.forget(addr);
+        }
+        Ok(())
     }
 
     fn evict_stale_temp_sessions(&mut self, now: SystemTime) {
@@ -1273,5 +1297,66 @@ mod tests {
 
         assert!(!server.session_temp.contains_key(&client_addr));
         assert!(!server.session_map.contains_key(&client_addr));
+    }
+
+    #[test]
+    fn pending_session_acks_and_resends_connection_request_accepted() {
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let client_addr: SocketAddr = "127.0.0.1:2".parse().unwrap();
+        let mut server = RakServer::new(RakServerConfig::default(), server_addr);
+        let now = SystemTime::now();
+        let mut client = RakClient::new(RakClientConfig::default());
+        client
+            .handle(RakClientInput::Connect(server_addr, now))
+            .unwrap();
+
+        loop {
+            let mut sent = false;
+            while let Some(out) = client.poll() {
+                if let RakClientOutput::SocketDatagram(buf, _) = out {
+                    sent = true;
+                    server
+                        .handle(RakServerInput::Datagram(buf, client_addr, now))
+                        .unwrap();
+                }
+            }
+            if !sent {
+                break;
+            }
+            for out in drain(&mut server) {
+                if let RakServerOutput::SocketDatagram(buf, _) = out
+                    && buf.first().is_some_and(|b| b & flags::VALID == 0)
+                {
+                    client
+                        .handle(RakClientInput::Datagram(buf, server_addr, now))
+                        .unwrap();
+                }
+            }
+        }
+        assert!(server.session_temp.contains_key(&client_addr));
+
+        server
+            .handle(RakServerInput::Update(now + Duration::from_millis(20)))
+            .unwrap();
+        let acked = drain(&mut server).iter().any(|out| {
+            matches!(out, RakServerOutput::SocketDatagram(buf, _)
+                if buf.first().is_some_and(|b| b & flags::ACK != 0))
+        });
+        assert!(
+            acked,
+            "pending session never acknowledged the ConnectionRequest"
+        );
+
+        server
+            .handle(RakServerInput::Update(now + Duration::from_millis(2100)))
+            .unwrap();
+        let resent = drain(&mut server).iter().any(|out| {
+            matches!(out, RakServerOutput::SocketDatagram(buf, _)
+                if buf.first().is_some_and(|b| b & flags::VALID != 0 && b & flags::ACK == 0 && b & flags::NACK == 0))
+        });
+        assert!(
+            resent,
+            "pending session never resent ConnectionRequestAccepted"
+        );
     }
 }

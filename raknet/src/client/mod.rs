@@ -254,7 +254,31 @@ impl RakClient {
             return Err(RakClientError::ConnectionFailed);
         }
 
-        if now >= self.last_attempt + self.config.conn_attempt_interval {
+        let mut session_wait = None;
+        if let (RakClientState::HandshakeCompleted(_), Some(session)) =
+            (&self.state, self.session.as_mut())
+        {
+            session.handle(RakSessionInput::Update(now))?;
+
+            while let Some(msg) = session.poll() {
+                match msg {
+                    RakSessionOutput::Datagram(buf, addr) => self
+                        .output
+                        .push_back(RakClientOutput::SocketDatagram(buf, addr)),
+                    RakSessionOutput::Wait(duration) => session_wait = Some(duration),
+                    RakSessionOutput::Disconnected(..) => {
+                        return Err(RakClientError::ConnectionFailed);
+                    }
+                    RakSessionOutput::Packet(_) => {}
+                }
+            }
+        }
+
+        let handshaking = matches!(
+            self.state,
+            RakClientState::Handshake1(_) | RakClientState::Handshake2(_)
+        );
+        if handshaking && now >= self.last_attempt + self.config.conn_attempt_interval {
             if self.attempts < self.config.conn_attempt_max {
                 match self.state {
                     RakClientState::Handshake1(addr) => {
@@ -280,7 +304,10 @@ impl RakClient {
 
         let timeout = self.connect_started + self.config.conn_attempt_timeout;
         let next = match self.state {
-            RakClientState::HandshakeCompleted(_) => timeout,
+            RakClientState::HandshakeCompleted(_) => match session_wait {
+                Some(wait) => min(now + wait, timeout),
+                None => timeout,
+            },
             _ => min(
                 self.last_attempt + self.config.conn_attempt_interval,
                 timeout,
@@ -467,6 +494,7 @@ impl RakClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::flags;
 
     fn last_datagram_len(client: &mut RakClient) -> u16 {
         let mut len = 0;
@@ -651,5 +679,34 @@ mod tests {
                 assert!(buf.len() <= constants::MAX_MTU_SIZE as usize);
             }
         }
+    }
+
+    #[test]
+    fn handshake_session_resends_connection_request() {
+        let mut client = RakClient::new(RakClientConfig::default());
+        let addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let t0 = SystemTime::now();
+
+        client.handle(RakClientInput::Connect(addr, t0)).unwrap();
+        client
+            .handle(RakClientInput::Datagram(reply_1(1200), addr, t0))
+            .unwrap();
+        client
+            .handle(RakClientInput::Datagram(reply_2(addr, 1200), addr, t0))
+            .unwrap();
+        while client.poll().is_some() {}
+
+        client
+            .handle(RakClientInput::Update(t0 + Duration::from_millis(2100)))
+            .unwrap();
+
+        let resent = std::iter::from_fn(|| client.poll()).any(|out| {
+            matches!(out, RakClientOutput::SocketDatagram(buf, _)
+                if buf.first().is_some_and(|b| b & flags::VALID != 0 && b & flags::ACK == 0))
+        });
+        assert!(
+            resent,
+            "handshake session never resent the ConnectionRequest"
+        );
     }
 }
