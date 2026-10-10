@@ -27,6 +27,8 @@ pub enum RakClientError {
     NoFreeIncomingConnections,
     #[error("Invalid MTU: {0}")]
     InvalidMtu(u16),
+    #[error("Timeout")]
+    Timeout,
     #[error("Closed")]
     Closed,
 }

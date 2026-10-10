@@ -9,15 +9,29 @@ use raknet::prelude::{
     RakSession as RakSessionIntl, RakSessionId, RakSessionInput, RakSessionSnapshot, Sans,
     constants,
 };
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::mem::take;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio::sync::oneshot;
-use tokio::time::{Instant, sleep, sleep_until};
+use tokio::time::{Instant, sleep, sleep_until, timeout};
 use tracing::debug;
+
+const PING_TIMEOUT: Duration = Duration::from_secs(5);
+
+struct PendingPing {
+    sent_ms: u64,
+    sent: SystemTime,
+    sender: oneshot::Sender<(Box<[u8]>, Duration)>,
+}
+
+fn millis_since_epoch(time: SystemTime) -> u64 {
+    time.duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
 
 fn fail_pending_connect(
     client: &RakClientIntl,
@@ -70,7 +84,7 @@ impl RakClient {
 
             async move {
                 let mut session_tx: Option<UnboundedSender<RakSessionInput>> = None;
-                let mut pings: HashMap<SocketAddr, VecDeque<_>> = HashMap::new();
+                let mut pings: HashMap<SocketAddr, Vec<PendingPing>> = HashMap::new();
                 let mut connect: Option<oneshot::Sender<Result<RakSession, RakClientError>>> = None;
 
                 let mut buf = vec![0u8; config.max_mtu_size as usize];
@@ -105,7 +119,10 @@ impl RakClient {
                                 RakClientMsg::Ping(addr, sender) => {
                                     let _ = client.handle(RakClientInput::Ping(addr, now));
 
-                                    pings.entry(addr).or_default().push_back((sender, now));
+                                    let sent_ms = millis_since_epoch(now);
+                                    let queue = pings.entry(addr).or_default();
+                                    queue.retain(|ping| !ping.sender.is_closed());
+                                    queue.push(PendingPing { sent_ms, sent: now, sender });
                                 }
                                 RakClientMsg::Connect(addr, sender) => {
                                     match client.handle(RakClientInput::Connect(addr, now)) {
@@ -188,15 +205,19 @@ impl RakClient {
                                 timer.as_mut().reset(Instant::now() + duration);
                             }
                             RakClientOutput::Pong(addr, msg, time) => {
-                                if let Some(queue) = pings.get_mut(&addr)
-                                    && let Some((sender, ping_time)) = queue.pop_front()
-                                {
-                                    let _ = sender.send((
-                                        msg,
-                                        ping_time
-                                            .duration_since(time)
-                                            .unwrap_or(Duration::from_secs(0)),
-                                    ));
+                                if let Some(queue) = pings.get_mut(&addr) {
+                                    queue.retain(|ping| !ping.sender.is_closed());
+
+                                    let echoed_ms = millis_since_epoch(time);
+                                    if let Some(index) =
+                                        queue.iter().position(|ping| ping.sent_ms == echoed_ms)
+                                    {
+                                        let ping = queue.remove(index);
+                                        let latency = SystemTime::now()
+                                            .duration_since(ping.sent)
+                                            .unwrap_or_default();
+                                        let _ = ping.sender.send((msg, latency));
+                                    }
                                 }
                             }
                         }
@@ -242,7 +263,10 @@ impl RakClient {
         let (tx, rx) = oneshot::channel();
 
         let _ = msg_tx.send(RakClientMsg::Ping(addr, tx));
-        rx.await.map_err(|_| RakClientError::Closed)
+        timeout(PING_TIMEOUT, rx)
+            .await
+            .map_err(|_| RakClientError::Timeout)?
+            .map_err(|_| RakClientError::Closed)
     }
 
     /// Resumes a session captured with [`RakSession::snapshot`] on another client.
@@ -279,6 +303,69 @@ impl RakClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn fake_server(reply_after: Option<Duration>) -> SocketAddr {
+        let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let addr = socket.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let mut buf = [0u8; 64];
+            loop {
+                let Ok((len, from)) = socket.recv_from(&mut buf).await else {
+                    return;
+                };
+                let Some(delay) = reply_after else {
+                    continue;
+                };
+                if len < 9 {
+                    continue;
+                }
+
+                let mut pong = vec![0x1C];
+                pong.extend_from_slice(&buf[1..9]);
+                pong.extend_from_slice(&[0u8; 8]);
+                pong.extend_from_slice(&constants::MAGIC);
+                pong.extend_from_slice(&2u16.to_be_bytes());
+                pong.extend_from_slice(b"hi");
+
+                sleep(delay).await;
+                let _ = socket.send_to(&pong, from).await;
+            }
+        });
+
+        addr
+    }
+
+    #[tokio::test]
+    async fn ping_latency_is_the_round_trip_time() {
+        let server = fake_server(Some(Duration::from_millis(50))).await;
+        let mut client = RakClient::new(|_| {});
+        client.start().await.unwrap();
+
+        let (message, latency) = client.ping(server).await.unwrap();
+
+        assert_eq!(message.as_ref(), b"hi");
+        assert!(
+            latency >= Duration::from_millis(40) && latency < Duration::from_millis(500),
+            "latency was {latency:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ping_to_a_silent_server_times_out() {
+        let server = fake_server(None).await;
+        let mut client = RakClient::new(|_| {});
+        client.start().await.unwrap();
+
+        let result = tokio::time::timeout(Duration::from_secs(60), client.ping(server))
+            .await
+            .expect("ping never gave up");
+
+        assert!(
+            matches!(result, Err(RakClientError::Timeout)),
+            "got {result:?}"
+        );
+    }
 
     #[tokio::test]
     #[ignore]
