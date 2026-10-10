@@ -3,4 +3,5 @@
 pub enum RakSessionState {
     Connected,
     Disconnected,
+    Closing,
 }

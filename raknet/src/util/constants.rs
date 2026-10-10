@@ -18,6 +18,8 @@ pub const CONNECTION_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(10_000);
 pub const CONNECTION_ATTEMPT_INTERVAL: Duration = Duration::from_millis(1_000);
 pub const CONNECTION_ATTEMPT_MAX: usize = 10;
 
+pub const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
+
 pub const AUTOFLUSH: bool = true;
 pub const AUTOFLUSH_INTERVAL_MS: i32 = 10;
 

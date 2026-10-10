@@ -135,6 +135,8 @@ impl RakClient {
         self.pongs.pop_front()
     }
 
+    /// Starts closing the session. Keep calling `update` until the disconnected event
+    /// arrives so queued data is sent and acknowledged.
     pub fn disconnect(&mut self) {
         let Some(session) = self.session.as_mut() else {
             return;
@@ -217,7 +219,7 @@ impl Drop for RakClient {
             return;
         };
 
-        let _ = session.handle(RakSessionInput::Disconnect(SystemTime::now()));
+        let _ = session.handle(RakSessionInput::DisconnectNow(SystemTime::now()));
 
         while let Some(output) = session.poll() {
             if let RakSessionOutput::Datagram(buf, addr) = output {

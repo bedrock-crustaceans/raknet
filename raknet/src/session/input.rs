@@ -8,4 +8,5 @@ pub enum RakSessionInput {
     Send(Box<[u8]>, RakReliability, RakPriority, SystemTime),
     Update(SystemTime),
     Disconnect(SystemTime),
+    DisconnectNow(SystemTime),
 }

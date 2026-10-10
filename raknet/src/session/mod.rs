@@ -55,6 +55,7 @@ pub struct RakSession {
     last_ping: SystemTime,
     last_recv: SystemTime,
     last_pong: SystemTime,
+    closing_since: Option<SystemTime>,
 
     congestion_controller: RakCongestionController,
     bandwidth_limited: bool,
@@ -228,6 +229,7 @@ impl RakSession {
             last_ping: at(snapshot.last_ping_ms),
             last_recv: at(snapshot.last_recv_ms),
             last_pong: at(snapshot.last_pong_ms),
+            closing_since: (snapshot.state == RakSessionState::Closing).then(SystemTime::now),
 
             congestion_controller: RakCongestionController::restore(
                 snapshot.congestion_controller,
@@ -328,11 +330,17 @@ impl Sans for RakSession {
                     _ => self.handle_frame_set(&mut cursor, now)?,
                 }
             }
+            RakSessionInput::Send(..) if self.state == RakSessionState::Closing => {
+                return Err(RakSessionError::Closed);
+            }
             RakSessionInput::Send(buf, reliability, priority, now) => {
                 self.send_frame(Frame::new(reliability, buf), priority, now)?
             }
             RakSessionInput::Update(now) => self.handle_timeout(now)?,
-            RakSessionInput::Disconnect(now) => {
+            RakSessionInput::Disconnect(now) => self.close(now)?,
+            RakSessionInput::DisconnectNow(now) => {
+                self.send_queue(now)?;
+                self.flush();
                 self.disconnect(true, RakDisconnectReason::Requested, now)?
             }
         }
@@ -366,6 +374,7 @@ impl RakSession {
             last_ping: now,
             last_recv: now,
             last_pong: now,
+            closing_since: None,
 
             state: RakSessionState::Connected,
             congestion_controller: RakCongestionController::new(mtu as usize),
@@ -436,6 +445,10 @@ impl RakSession {
 
         self.evict_stale_splits(now);
 
+        if self.state == RakSessionState::Closing {
+            return self.update_closing(now);
+        }
+
         if self.config.autoflush && now >= self.last_tick + self.config.autoflush_interval_ms {
             self.tick(now)?;
 
@@ -467,6 +480,51 @@ impl RakSession {
         }
 
         let duration = next.duration_since(now).unwrap_or(Duration::from_secs(0));
+
+        self.output.push_back(RakSessionOutput::Wait(duration));
+        Ok(())
+    }
+
+    fn close(&mut self, now: SystemTime) -> Result<(), RakSessionError> {
+        if self.state == RakSessionState::Closing {
+            return Ok(());
+        }
+
+        self.state = RakSessionState::Closing;
+        self.closing_since = Some(now);
+        self.last_tick = now;
+        self.tick(now)?;
+
+        if self.nothing_left_to_send() {
+            return self.disconnect(true, RakDisconnectReason::Requested, now);
+        }
+
+        self.output
+            .push_back(RakSessionOutput::Wait(self.config.autoflush_interval_ms));
+        Ok(())
+    }
+
+    fn nothing_left_to_send(&self) -> bool {
+        self.queue.is_empty()
+            && self.outbound_cache.is_empty()
+            && self.outbound_queue.iter().all(VecDeque::is_empty)
+    }
+
+    fn update_closing(&mut self, now: SystemTime) -> Result<(), RakSessionError> {
+        let deadline = self.closing_since.unwrap_or(now) + self.config.close_timeout;
+
+        self.tick(now)?;
+        self.last_tick = now;
+
+        if self.nothing_left_to_send() || now >= deadline {
+            return self.disconnect(true, RakDisconnectReason::Requested, now);
+        }
+
+        let next = min(
+            min(deadline, self.last_recv + SESSION_TIMEOUT),
+            now + self.config.autoflush_interval_ms,
+        );
+        let duration = next.duration_since(now).unwrap_or(Duration::ZERO);
 
         self.output.push_back(RakSessionOutput::Wait(duration));
         Ok(())
@@ -1930,5 +1988,133 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn drain_outputs(session: &mut RakSession) -> Vec<RakSessionOutput> {
+        std::iter::from_fn(|| session.poll()).collect()
+    }
+
+    fn datagrams_of(outputs: &[RakSessionOutput]) -> Vec<Box<[u8]>> {
+        outputs
+            .iter()
+            .filter_map(|out| match out {
+                RakSessionOutput::Datagram(buf, _) => Some(buf.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn payloads_of(outputs: &[RakSessionOutput]) -> Vec<Box<[u8]>> {
+        datagrams_of(outputs)
+            .iter()
+            .filter(|buf| buf[0] & flags::VALID != 0 && buf[0] & (flags::ACK | flags::NACK) == 0)
+            .flat_map(|buf| {
+                FrameSet::deserialize(&mut Cursor::new(buf.as_ref()))
+                    .unwrap()
+                    .frames
+            })
+            .map(|frame| frame.payload)
+            .collect()
+    }
+
+    fn disconnect_reason_of(outputs: &[RakSessionOutput]) -> Option<RakDisconnectReason> {
+        outputs.iter().find_map(|out| match out {
+            RakSessionOutput::Disconnected(_, reason) => Some(*reason),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn close_sends_queued_data_and_waits_for_ack() {
+        let mut a = session(1, 1);
+        let mut b = session(2, 2);
+        let t0 = SystemTime::now();
+        let payload: Box<[u8]> = vec![0xFE, 1, 2, 3].into();
+
+        a.handle(RakSessionInput::Send(
+            payload.clone(),
+            RakReliability::ReliableOrdered,
+            RakPriority::Normal,
+            t0,
+        ))
+        .unwrap();
+        a.handle(RakSessionInput::Disconnect(t0)).unwrap();
+
+        let outputs = drain_outputs(&mut a);
+        assert!(
+            payloads_of(&outputs).contains(&payload),
+            "queued payload was not sent"
+        );
+        assert_eq!(disconnect_reason_of(&outputs), None);
+        assert_eq!(a.state, RakSessionState::Closing);
+
+        for buf in datagrams_of(&outputs) {
+            b.handle(RakSessionInput::Datagram(buf, t0)).unwrap();
+        }
+        b.tick(t0).unwrap();
+        deliver(&mut b, &mut a, t0);
+
+        a.handle(RakSessionInput::Update(t0 + Duration::from_millis(20)))
+            .unwrap();
+        let outputs = drain_outputs(&mut a);
+        assert!(
+            payloads_of(&outputs)
+                .iter()
+                .any(|payload| payload.first() == Some(&0x15)),
+            "disconnect notice was not sent"
+        );
+        assert_eq!(
+            disconnect_reason_of(&outputs),
+            Some(RakDisconnectReason::Requested)
+        );
+    }
+
+    #[test]
+    fn close_gives_up_after_close_timeout() {
+        let mut a = session(1, 1);
+        let t0 = SystemTime::now();
+
+        a.handle(RakSessionInput::Send(
+            vec![0xFE, 1].into(),
+            RakReliability::ReliableOrdered,
+            RakPriority::Normal,
+            t0,
+        ))
+        .unwrap();
+        a.handle(RakSessionInput::Disconnect(t0)).unwrap();
+        drain_outputs(&mut a);
+
+        a.handle(RakSessionInput::Update(t0 + Duration::from_secs(4)))
+            .unwrap();
+        assert_eq!(disconnect_reason_of(&drain_outputs(&mut a)), None);
+
+        a.handle(RakSessionInput::Update(t0 + Duration::from_millis(5001)))
+            .unwrap();
+        assert_eq!(
+            disconnect_reason_of(&drain_outputs(&mut a)),
+            Some(RakDisconnectReason::Requested)
+        );
+    }
+
+    #[test]
+    fn close_resends_unacknowledged_data() {
+        let mut a = session(1, 1);
+        let t0 = SystemTime::now();
+        let payload: Box<[u8]> = vec![0xFE, 9, 9].into();
+
+        a.handle(RakSessionInput::Send(
+            payload.clone(),
+            RakReliability::ReliableOrdered,
+            RakPriority::Immediate,
+            t0,
+        ))
+        .unwrap();
+        a.handle(RakSessionInput::Disconnect(t0)).unwrap();
+        drain_outputs(&mut a);
+
+        let result = a.handle(RakSessionInput::Update(t0 + Duration::from_millis(2100)));
+
+        assert!(result.is_ok(), "update while closing failed: {result:?}");
+        assert!(payloads_of(&drain_outputs(&mut a)).contains(&payload));
     }
 }

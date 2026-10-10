@@ -153,6 +153,8 @@ impl RakServer {
         self.received.pop_front()
     }
 
+    /// Starts closing the session. Keep calling `update` until the disconnected event
+    /// arrives so queued data is sent and acknowledged.
     pub fn disconnect(&mut self, id: RakSessionId) {
         let now = SystemTime::now();
         let mut disconnected = Vec::new();
@@ -256,7 +258,7 @@ impl Drop for RakServer {
         let now = SystemTime::now();
 
         for session in self.sessions.values_mut() {
-            let _ = session.handle(RakSessionInput::Disconnect(now));
+            let _ = session.handle(RakSessionInput::DisconnectNow(now));
 
             while let Some(output) = session.poll() {
                 if let RakSessionOutput::Datagram(buf, addr) = output {

@@ -17,7 +17,7 @@ use std::net::SocketAddr;
 use std::time::{Duration, SystemTime};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
-use tokio::time::{MissedTickBehavior, interval};
+use tokio::time::{Instant, MissedTickBehavior, interval};
 use tracing::debug;
 
 pub struct RakServer {
@@ -91,6 +91,8 @@ impl RakServer {
                 let (dgram_tx, mut dgram_rx) = unbounded_channel::<(Box<[u8]>, SocketAddr)>();
                 let (disconnect_tx, mut disconnect_rx) = unbounded_channel::<RakSessionId>();
 
+                let mut stop_deadline: Option<Instant> = None;
+
                 let mut update_interval = interval(Duration::from_millis(
                     constants::AUTOFLUSH_INTERVAL_MS as u64,
                 ));
@@ -151,7 +153,9 @@ impl RakServer {
                                         let _ = session.send(RakSessionInput::Disconnect(now));
                                     }
 
-                                    break;
+                                    stop_deadline = Some(
+                                        Instant::now() + constants::CLOSE_TIMEOUT + Duration::from_secs(1),
+                                    );
                                 }
                             }
                         }
@@ -182,12 +186,28 @@ impl RakServer {
                                     disconnect_tx.clone(),
                                 );
 
+                                if stop_deadline.is_some() {
+                                    let _ = tx.send(RakSessionInput::Disconnect(SystemTime::now()));
+                                    sessions.insert(id, tx);
+                                    continue;
+                                }
+
                                 sessions.insert(id, tx);
 
                                 let _ = session_tx.send(session);
                             }
                         }
                     }
+
+                    if let Some(deadline) = stop_deadline
+                        && (sessions.is_empty() || Instant::now() >= deadline)
+                    {
+                        break;
+                    }
+                }
+
+                while let Ok((buf, addr)) = dgram_rx.try_recv() {
+                    let _ = socket.send_to(buf.as_ref(), addr).await;
                 }
             }
         });

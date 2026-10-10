@@ -7,6 +7,7 @@ use crate::prelude::{RakServerError, RakSession};
 use raknet::prelude::{
     RakClient as RakClientIntl, RakClientConfig, RakClientError, RakClientInput, RakClientOutput,
     RakSession as RakSessionIntl, RakSessionId, RakSessionInput, RakSessionSnapshot, Sans,
+    constants,
 };
 use std::collections::{HashMap, VecDeque};
 use std::mem::take;
@@ -15,7 +16,7 @@ use std::time::{Duration, SystemTime};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio::sync::oneshot;
-use tokio::time::{Instant, sleep};
+use tokio::time::{Instant, sleep, sleep_until};
 use tracing::debug;
 
 pub struct RakClient {
@@ -63,6 +64,8 @@ impl RakClient {
                 let timer = sleep(Duration::ZERO);
                 tokio::pin!(timer);
 
+                let mut stop_deadline: Option<Instant> = None;
+
                 loop {
                     tokio::select! {
                         Ok((len, addr)) = socket.recv_from(&mut buf) => {
@@ -109,13 +112,21 @@ impl RakClient {
                                         let _ = session.send(RakSessionInput::Disconnect(now));
                                     }
 
-                                    break;
+                                    stop_deadline = Some(
+                                        Instant::now() + constants::CLOSE_TIMEOUT + Duration::from_secs(1),
+                                    );
                                 }
                             }
                         }
                         _ = &mut timer => {
                             let _ = client.handle(RakClientInput::Update(SystemTime::now()));
                         }
+                        _ = async {
+                            match stop_deadline {
+                                Some(deadline) => sleep_until(deadline).await,
+                                None => std::future::pending().await,
+                            }
+                        } => {}
                     }
 
                     while let Some(msg) = client.poll() {
@@ -141,6 +152,12 @@ impl RakClient {
                                     disconnect_tx.clone(),
                                 );
 
+                                if stop_deadline.is_some() {
+                                    let _ = tx.send(RakSessionInput::Disconnect(SystemTime::now()));
+                                    session_tx = Some(tx);
+                                    continue;
+                                }
+
                                 session_tx = Some(tx);
 
                                 if let Some(sender) = take(&mut connect) {
@@ -164,6 +181,16 @@ impl RakClient {
                             }
                         }
                     }
+
+                    if let Some(deadline) = stop_deadline
+                        && (session_tx.is_none() || Instant::now() >= deadline)
+                    {
+                        break;
+                    }
+                }
+
+                while let Ok((buf, addr)) = dgram_rx.try_recv() {
+                    let _ = socket.send_to(buf.as_ref(), addr).await;
                 }
             }
         });

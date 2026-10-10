@@ -54,7 +54,7 @@ impl RakSession {
                                 let _ = sender.send(res);
                             }
                             RakSessionMsg::IsClosed(sender) => {
-                                let closed = matches!(session.get_state(), RakSessionState::Disconnected);
+                                let closed = !matches!(session.get_state(), RakSessionState::Connected);
                                 let _ = sender.send(closed);
                             },
                             RakSessionMsg::Snapshot(sender) => {

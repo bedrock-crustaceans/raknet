@@ -116,8 +116,9 @@ impl Sans for RakClient {
                                                     success = Some(true);
                                                 }
                                                 packet_id::CONNECTION_ATTEMPT_FAILED => {
-                                                    session
-                                                        .handle(RakSessionInput::Disconnect(now))?;
+                                                    session.handle(
+                                                        RakSessionInput::DisconnectNow(now),
+                                                    )?;
                                                     success = Some(false);
                                                 }
                                                 _ => {

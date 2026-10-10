@@ -1,5 +1,5 @@
 use crate::util::constants::{
-    AUTOFLUSH, AUTOFLUSH_INTERVAL_MS, MAX_ORDERING_CHANNELS, MAX_QUEUED_BYTES,
+    AUTOFLUSH, AUTOFLUSH_INTERVAL_MS, CLOSE_TIMEOUT, MAX_ORDERING_CHANNELS, MAX_QUEUED_BYTES,
 };
 use std::time::Duration;
 
@@ -9,6 +9,7 @@ pub struct RakSessionConfig {
     pub autoflush: bool,
     pub autoflush_interval_ms: Duration,
     pub max_queued_bytes: i32,
+    pub close_timeout: Duration,
 }
 
 impl Default for RakSessionConfig {
@@ -18,6 +19,7 @@ impl Default for RakSessionConfig {
             autoflush: AUTOFLUSH,
             autoflush_interval_ms: Duration::from_millis(AUTOFLUSH_INTERVAL_MS as u64),
             max_queued_bytes: MAX_QUEUED_BYTES,
+            close_timeout: CLOSE_TIMEOUT,
         }
     }
 }

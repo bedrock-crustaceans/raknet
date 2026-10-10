@@ -366,7 +366,7 @@ impl RakServer {
                 if full {
                     debug!("dropping connection from {} due to max connections", addr);
 
-                    session.handle(RakSessionInput::Disconnect(now))?;
+                    session.handle(RakSessionInput::DisconnectNow(now))?;
                     self.forward_datagrams(&mut session);
                     self.forget(addr);
                     return Ok(());
