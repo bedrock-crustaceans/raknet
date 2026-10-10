@@ -21,10 +21,23 @@ impl Default for RakClientConfig {
             min_mtu_size: constants::MIN_MTU_SIZE,
             max_mtu_size: constants::MAX_MTU_SIZE,
             protocol: constants::PROTOCOL,
-            guid: random(),
+            guid: random::<u64>() | (1 << 63),
             conn_attempt_timeout: constants::CONNECTION_ATTEMPT_TIMEOUT,
             conn_attempt_interval: constants::CONNECTION_ATTEMPT_INTERVAL,
             conn_attempt_max: constants::CONNECTION_ATTEMPT_MAX,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_guid_is_negative_as_i64() {
+        for _ in 0..256 {
+            let guid = RakClientConfig::default().guid;
+            assert!((guid as i64) < 0, "guid {guid:#x} has the sign bit clear");
         }
     }
 }
