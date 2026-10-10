@@ -11,13 +11,52 @@ use raknet::prelude::{
 };
 use std::collections::HashMap;
 use std::mem::take;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 use tokio::sync::oneshot;
 use tokio::time::{Instant, sleep, sleep_until, timeout};
 use tracing::debug;
+
+struct ClientSockets {
+    v4: UdpSocket,
+    v6: Option<UdpSocket>,
+}
+
+impl ClientSockets {
+    async fn bind(port: u16) -> std::io::Result<Self> {
+        let v4 = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, port)).await?;
+        let v6 = UdpSocket::bind((Ipv6Addr::UNSPECIFIED, port)).await.ok();
+
+        Ok(Self { v4, v6 })
+    }
+
+    async fn recv(
+        &self,
+        buf4: &mut [u8],
+        buf6: &mut [u8],
+    ) -> std::io::Result<(Box<[u8]>, SocketAddr)> {
+        tokio::select! {
+            received = self.v4.recv_from(buf4) => {
+                received.map(|(len, addr)| (buf4[..len].into(), addr))
+            }
+            received = async {
+                match &self.v6 {
+                    Some(socket) => socket.recv_from(buf6).await,
+                    None => std::future::pending().await,
+                }
+            } => received.map(|(len, addr)| (buf6[..len].into(), addr)),
+        }
+    }
+
+    async fn send_to(&self, buf: &[u8], addr: SocketAddr) -> std::io::Result<usize> {
+        match &self.v6 {
+            Some(socket) if addr.is_ipv6() => socket.send_to(buf, addr).await,
+            _ => self.v4.send_to(buf, addr).await,
+        }
+    }
+}
 
 const PING_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -75,11 +114,11 @@ impl RakClient {
 
         let (msg_tx, msg_rx) = unbounded_channel();
 
-        let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, config.local_port)).await?;
+        let sockets = ClientSockets::bind(config.local_port).await?;
 
         let handle = tokio::spawn({
             let config = config.clone();
-            let socket = socket;
+            let sockets = sockets;
             let mut msg_rx = msg_rx;
 
             async move {
@@ -87,7 +126,8 @@ impl RakClient {
                 let mut pings: HashMap<SocketAddr, Vec<PendingPing>> = HashMap::new();
                 let mut connect: Option<oneshot::Sender<Result<RakSession, RakClientError>>> = None;
 
-                let mut buf = vec![0u8; config.max_mtu_size as usize];
+                let mut buf4 = vec![0u8; config.max_mtu_size as usize];
+                let mut buf6 = vec![0u8; config.max_mtu_size as usize];
                 let mut client = RakClientIntl::new(config);
 
                 let (dgram_tx, mut dgram_rx) = unbounded_channel::<(Box<[u8]>, SocketAddr)>();
@@ -100,14 +140,14 @@ impl RakClient {
 
                 loop {
                     tokio::select! {
-                        Ok((len, addr)) = socket.recv_from(&mut buf) => {
+                        Ok((datagram, addr)) = sockets.recv(&mut buf4, &mut buf6) => {
                             let now = SystemTime::now();
 
-                            let result = client.handle(RakClientInput::Datagram(buf[..len].into(), addr, now));
+                            let result = client.handle(RakClientInput::Datagram(datagram, addr, now));
                             fail_pending_connect(&client, &mut connect, result);
                         }
                         Some((buf, addr)) = dgram_rx.recv() => {
-                            let _ = socket.send_to(buf.as_ref(), addr).await;
+                            let _ = sockets.send_to(buf.as_ref(), addr).await;
                         }
                         Some(_) = disconnect_rx.recv() => {
                             session_tx = None;
@@ -169,7 +209,7 @@ impl RakClient {
                     while let Some(msg) = client.poll() {
                         match msg {
                             RakClientOutput::SocketDatagram(buf, addr) => {
-                                let _ = socket.send_to(&buf, addr).await;
+                                let _ = sockets.send_to(&buf, addr).await;
                             }
                             RakClientOutput::SessionDatagram(buf) => {
                                 if let Some(session) = &session_tx {
@@ -231,7 +271,7 @@ impl RakClient {
                 }
 
                 while let Ok((buf, addr)) = dgram_rx.try_recv() {
-                    let _ = socket.send_to(buf.as_ref(), addr).await;
+                    let _ = sockets.send_to(buf.as_ref(), addr).await;
                 }
             }
         });
@@ -393,6 +433,32 @@ mod tests {
                 pong.1.as_millis(),
                 String::from_utf8_lossy(&pong.0)
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn connect_over_ipv6_sends_open_connection_request_1() {
+        let Ok(listener) = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).await else {
+            return;
+        };
+        let addr = listener.local_addr().unwrap();
+
+        let mut client = RakClient::new(|_| {});
+        client.start().await.unwrap();
+
+        let connect = client.connect(addr);
+        tokio::pin!(connect);
+        let mut buf = [0u8; 2048];
+
+        tokio::select! {
+            _ = &mut connect => panic!("connect resolved without a server"),
+            received = timeout(Duration::from_secs(2), listener.recv_from(&mut buf)) => {
+                let (len, _) = received
+                    .expect("no datagram reached the IPv6 listener")
+                    .unwrap();
+                assert!(len > 0);
+                assert_eq!(buf[0], 0x05);
+            }
         }
     }
 }
