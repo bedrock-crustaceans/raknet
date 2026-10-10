@@ -910,9 +910,10 @@ impl RakSession {
                 || u24::distance(self.inbound_ord_idx[channel], frame.order_index) < 0
             {
                 debug!(
-                    "received out of order FrameSet {} from {}",
+                    "dropped stale sequenced frame on channel {} from {}",
                     frame.order_channel, self.addr
                 );
+                return Ok(());
             }
 
             self.inbound_seq_idx[channel] = u24::add(frame.sequence_index, 1);
@@ -1544,6 +1545,29 @@ mod tests {
         assert_eq!(
             disconnect_reason(&session),
             Some(RakDisconnectReason::ProtocolViolation)
+        );
+    }
+
+    fn sequenced(sequence_index: u32, payload: &[u8]) -> Frame {
+        let mut frame = Frame::new(RakReliability::UnreliableSequenced, payload.into());
+        frame.sequence_index = sequence_index;
+        frame
+    }
+
+    #[test]
+    fn stale_sequenced_frame_is_dropped() {
+        let mut session = session(0, 1);
+        let now = SystemTime::now();
+
+        session.handle_frame(sequenced(5, &[0xFE, 1]), now).unwrap();
+        session.handle_frame(sequenced(3, &[0xFE, 2]), now).unwrap();
+        session.handle_frame(sequenced(6, &[0xFE, 3]), now).unwrap();
+
+        let delivered = packets(&mut session);
+        assert_eq!(
+            delivered,
+            vec![Box::<[u8]>::from([0xFE, 1]), Box::<[u8]>::from([0xFE, 3])],
+            "a sequenced frame older than the last delivered one must be dropped"
         );
     }
 
