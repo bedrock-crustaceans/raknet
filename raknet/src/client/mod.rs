@@ -626,6 +626,26 @@ mod tests {
     }
 
     #[test]
+    fn failed_connect_schedules_a_wait_instead_of_spinning() {
+        let mut client = RakClient::new(RakClientConfig::default());
+        let addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let start = SystemTime::now();
+
+        client.handle(RakClientInput::Connect(addr, start)).unwrap();
+        last_wait(&mut client);
+
+        let failed_at = start + client.config.conn_attempt_timeout;
+        let result = client.handle(RakClientInput::Update(failed_at));
+        assert!(matches!(result, Err(RakClientError::ConnectionFailed)));
+        assert!(last_wait(&mut client).is_some_and(|w| w > Duration::ZERO));
+
+        client
+            .handle(RakClientInput::Update(failed_at + Duration::from_secs(1)))
+            .unwrap();
+        assert!(last_wait(&mut client).is_some_and(|w| w > Duration::ZERO));
+    }
+
+    #[test]
     fn disconnect_input_allows_reconnect() {
         let mut client = RakClient::new(RakClientConfig::default());
         let addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
