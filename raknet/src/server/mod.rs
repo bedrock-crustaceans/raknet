@@ -58,6 +58,10 @@ pub struct RakServer {
     offline_total: i32,
     offline_per_ip: HashMap<IpAddr, i32>,
 
+    online_window: SystemTime,
+    online_per_ip: HashMap<IpAddr, i32>,
+    blocked: HashMap<IpAddr, SystemTime>,
+
     cookie_key: RandomState,
     cookie_salts: [u64; 2],
     cookie_rotated: SystemTime,
@@ -76,11 +80,20 @@ impl Sans for RakServer {
                 let Some(&header) = buf.first() else {
                     return Ok(());
                 };
+                if self.is_blocked(addr.ip(), now) {
+                    return Ok(());
+                }
 
                 match header & flags::VALID {
                     0 => self.handle_offline_datagram(&buf, addr, now)?,
                     _ => self.handle_online_datagram(buf, addr, now)?,
                 }
+            }
+            RakServerInput::Block(ip, duration, now) => {
+                self.blocked.insert(ip.to_canonical(), now + duration);
+            }
+            RakServerInput::Unblock(ip) => {
+                self.blocked.remove(&ip.to_canonical());
             }
             RakServerInput::SetMaxConnections(n) => {
                 self.config.max_connections = n;
@@ -103,6 +116,7 @@ impl Sans for RakServer {
             }
             RakServerInput::Update(now) => {
                 self.rotate_cookie_salt(now);
+                self.blocked.retain(|_, until| now < *until);
                 self.evict_stale_temp_sessions(now);
                 self.tick_temp_sessions(now)?;
             }
@@ -130,6 +144,9 @@ impl RakServer {
             offline_window: SystemTime::UNIX_EPOCH,
             offline_total: 0,
             offline_per_ip: HashMap::new(),
+            online_window: SystemTime::UNIX_EPOCH,
+            online_per_ip: HashMap::new(),
+            blocked: HashMap::new(),
 
             cookie_key: RandomState::new(),
             cookie_salts: [random(), random()],
@@ -244,6 +261,31 @@ impl RakServer {
         *count > self.config.packet_limit
     }
 
+    fn online_rate_limited(&mut self, ip: IpAddr, now: SystemTime) -> bool {
+        if now.duration_since(self.online_window).unwrap_or_default()
+            >= constants::ONLINE_RATE_LIMIT_WINDOW
+        {
+            self.online_window = now;
+            self.online_per_ip.clear();
+        }
+
+        let count = self.online_per_ip.entry(ip.to_canonical()).or_insert(0);
+        *count += 1;
+        *count > self.config.online_packet_limit
+    }
+
+    fn is_blocked(&mut self, ip: IpAddr, now: SystemTime) -> bool {
+        let ip = ip.to_canonical();
+        match self.blocked.get(&ip) {
+            Some(&until) if now < until => true,
+            Some(_) => {
+                self.blocked.remove(&ip);
+                false
+            }
+            None => false,
+        }
+    }
+
     fn tick_temp_sessions(&mut self, now: SystemTime) -> Result<(), RakServerError> {
         let mut closed = Vec::new();
 
@@ -319,6 +361,16 @@ impl RakServer {
         addr: SocketAddr,
         now: SystemTime,
     ) -> Result<(), RakServerError> {
+        if self.online_rate_limited(addr.ip(), now) {
+            debug!(
+                "blocking {} for exceeding the online packet limit",
+                addr.ip()
+            );
+            self.blocked
+                .insert(addr.ip().to_canonical(), now + self.config.block_duration);
+            return Ok(());
+        }
+
         let full = self.established_count() >= self.config.max_connections;
 
         if let Entry::Occupied(mut entry) = self.session_temp.entry(addr) {
@@ -914,6 +966,119 @@ mod tests {
 
         assert_eq!(sessions.len(), 2);
         assert!(sessions.iter().any(|s| s.addr.ip() == clients[2].ip()));
+    }
+
+    fn online_datagram() -> Box<[u8]> {
+        Box::new([flags::VALID, 0, 0, 0])
+    }
+
+    fn session_datagrams(server: &mut RakServer) -> usize {
+        drain(server)
+            .iter()
+            .filter(|o| matches!(o, RakServerOutput::SessionDatagram(..)))
+            .count()
+    }
+
+    #[test]
+    fn a_flood_of_online_datagrams_blocks_the_ip_for_a_while() {
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let mut server = RakServer::new(RakServerConfig::default(), server_addr);
+        let now = SystemTime::now();
+        let flooder: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let bystander: SocketAddr = "127.0.0.2:1".parse().unwrap();
+        connect_all(&mut server, server_addr, &[flooder, bystander], now);
+        drain(&mut server);
+        let now = now + Duration::from_secs(1);
+
+        let limit = server.config.online_packet_limit as usize;
+        for _ in 0..limit * 2 {
+            server
+                .handle(RakServerInput::Datagram(online_datagram(), flooder, now))
+                .unwrap();
+        }
+        assert_eq!(session_datagrams(&mut server), limit);
+
+        let later = now + Duration::from_secs(1);
+        for addr in [flooder, bystander] {
+            server
+                .handle(RakServerInput::Datagram(online_datagram(), addr, later))
+                .unwrap();
+        }
+        assert_eq!(
+            session_datagrams(&mut server),
+            1,
+            "only the bystander gets through"
+        );
+
+        let unblocked = now + server.config.block_duration;
+        server
+            .handle(RakServerInput::Datagram(
+                online_datagram(),
+                flooder,
+                unblocked,
+            ))
+            .unwrap();
+        assert_eq!(session_datagrams(&mut server), 1);
+    }
+
+    #[test]
+    fn expired_blocks_are_pruned_on_update() {
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let mut server = RakServer::new(RakServerConfig::default(), server_addr);
+        let now = SystemTime::now();
+
+        server
+            .handle(RakServerInput::Block(
+                "127.0.0.9".parse().unwrap(),
+                Duration::from_secs(1),
+                now,
+            ))
+            .unwrap();
+        server
+            .handle(RakServerInput::Update(now + Duration::from_secs(2)))
+            .unwrap();
+
+        assert!(server.blocked.is_empty());
+    }
+
+    #[test]
+    fn a_blocked_ip_is_ignored_until_unblocked() {
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let mut server = RakServer::new(RakServerConfig::default(), server_addr);
+        let now = SystemTime::now();
+        let client: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let ping = || {
+            let mut buf = Vec::new();
+            UnconnectedPing {
+                timestamp: 0,
+                client: 1,
+            }
+            .serialize(&mut buf)
+            .unwrap();
+            buf.into_boxed_slice()
+        };
+
+        server
+            .handle(RakServerInput::Block(
+                client.ip(),
+                Duration::from_secs(60),
+                now,
+            ))
+            .unwrap();
+        server
+            .handle(RakServerInput::Datagram(ping(), client, now))
+            .unwrap();
+        assert!(drain(&mut server).is_empty());
+
+        server.handle(RakServerInput::Unblock(client.ip())).unwrap();
+        server
+            .handle(RakServerInput::Datagram(ping(), client, now))
+            .unwrap();
+        assert!(
+            drain(&mut server)
+                .iter()
+                .any(|o| first_byte(o) == Some(packet_id::UNCONNECTED_PONG))
+        );
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use crate::util::constants;
 use rand::random;
+use std::time::Duration;
 
 #[derive(Clone, Debug)]
 pub struct RakServerConfig {
@@ -15,6 +16,8 @@ pub struct RakServerConfig {
     pub max_mtu_size: u16,
     pub packet_limit: i32,
     pub total_packet_limit: i32,
+    pub online_packet_limit: i32,
+    pub block_duration: Duration,
     pub security: bool,
     pub cookies: bool,
     pub require_dialled_port: bool,
@@ -35,6 +38,8 @@ impl Default for RakServerConfig {
             max_mtu_size: constants::MAX_MTU_SIZE,
             packet_limit: constants::PACKET_LIMIT,
             total_packet_limit: constants::TOTAL_PACKET_LIMIT,
+            online_packet_limit: constants::ONLINE_PACKET_LIMIT,
+            block_duration: constants::BLOCK_DURATION,
             security: false,
             cookies: true,
             require_dialled_port: false,

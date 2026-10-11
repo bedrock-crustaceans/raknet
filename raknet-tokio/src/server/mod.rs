@@ -13,7 +13,7 @@ use raknet::prelude::{
 };
 use state::{Initialized, Running};
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, SystemTime};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
@@ -62,6 +62,19 @@ impl RakServer {
                 let _ = msg_tx.send(RakServerMsg::SetMaxConnections(val));
             }
             _ => {}
+        }
+    }
+
+    /// Drops every datagram from `ip` for `duration`. Takes effect once the server is running.
+    pub fn block(&mut self, ip: IpAddr, duration: Duration) {
+        if let RakServerState::Running(Running { msg_tx, .. }) = &mut self.state {
+            let _ = msg_tx.send(RakServerMsg::Block(ip, duration));
+        }
+    }
+
+    pub fn unblock(&mut self, ip: IpAddr) {
+        if let RakServerState::Running(Running { msg_tx, .. }) = &mut self.state {
+            let _ = msg_tx.send(RakServerMsg::Unblock(ip));
         }
     }
 
@@ -129,6 +142,12 @@ impl RakServer {
                                 },
                                 RakServerMsg::SetMaxConnections(n) => {
                                     let _ = server.handle(RakServerInput::SetMaxConnections(n));
+                                }
+                                RakServerMsg::Block(ip, duration) => {
+                                    let _ = server.handle(RakServerInput::Block(ip, duration, SystemTime::now()));
+                                }
+                                RakServerMsg::Unblock(ip) => {
+                                    let _ = server.handle(RakServerInput::Unblock(ip));
                                 }
                                 RakServerMsg::Adopt(session, reply) => {
                                     server.adopt(*session);

@@ -1,6 +1,6 @@
 use crate::session::RakSessionId;
-use std::net::SocketAddr;
-use std::time::SystemTime;
+use std::net::{IpAddr, SocketAddr};
+use std::time::{Duration, SystemTime};
 
 pub enum RakServerInput {
     SetMessage(Box<[u8]>),
@@ -8,4 +8,6 @@ pub enum RakServerInput {
     Datagram(Box<[u8]>, SocketAddr, SystemTime),
     RemoveSession(RakSessionId, SystemTime),
     Update(SystemTime),
+    Block(IpAddr, Duration, SystemTime),
+    Unblock(IpAddr),
 }

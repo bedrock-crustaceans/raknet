@@ -11,6 +11,9 @@ pub const DGRAM_MTU_OVERHEAD: u16 = 36;
 pub const MAX_ORDERING_CHANNELS: i32 = 32;
 pub const PACKET_LIMIT: i32 = 120;
 pub const TOTAL_PACKET_LIMIT: i32 = 100_000;
+pub const ONLINE_PACKET_LIMIT: i32 = 120;
+pub const ONLINE_RATE_LIMIT_WINDOW: Duration = Duration::from_millis(10);
+pub const BLOCK_DURATION: Duration = Duration::from_secs(10);
 
 pub const MAX_PENDING_CONNECTIONS: usize = 64;
 pub const MAX_PENDING_PER_IP: usize = 8;
