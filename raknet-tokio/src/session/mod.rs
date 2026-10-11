@@ -4,13 +4,17 @@ use crate::session::command::RakSessionMsg;
 use raknet::prelude::{RakSession as RakSessionIntl, *};
 use std::net::SocketAddr;
 use std::time::{Duration, SystemTime};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::mpsc::{Receiver, Sender, UnboundedSender, channel, unbounded_channel};
 use tokio::sync::oneshot;
 use tokio::time::{Instant, sleep};
+use tracing::debug;
+
+const SESSION_QUEUE_CAPACITY: usize = 4096;
 
 pub struct RakSession {
     pub(crate) msg_tx: UnboundedSender<RakSessionMsg>,
-    pub(crate) buf_rx: UnboundedReceiver<Box<[u8]>>,
+    pub(crate) buf_rx: Receiver<Box<[u8]>>,
     pub(crate) addr: SocketAddr,
     pub(crate) max_message_len: usize,
 }
@@ -20,10 +24,10 @@ impl RakSession {
         session: RakSessionIntl,
         datagram_tx: UnboundedSender<(Box<[u8]>, SocketAddr)>,
         disconnect_tx: UnboundedSender<RakSessionId>,
-    ) -> (Self, UnboundedSender<RakSessionInput>) {
+    ) -> (Self, Sender<RakSessionInput>) {
         let (msg_tx, msg_rx) = unbounded_channel();
-        let (buf_tx, buf_rx) = unbounded_channel();
-        let (tx, rx) = unbounded_channel();
+        let (buf_tx, buf_rx) = channel(SESSION_QUEUE_CAPACITY);
+        let (tx, rx) = channel(SESSION_QUEUE_CAPACITY);
 
         let addr = session.addr;
         let id = session.id;
@@ -62,9 +66,14 @@ impl RakSession {
                             },
                         }
                     }
-                    Some(recv) = rx.recv() => {
-                        let _ = session.handle(recv);
-                    }
+                    recv = rx.recv() => match recv {
+                        Some(recv) => {
+                            let _ = session.handle(recv);
+                        }
+                        None => {
+                            let _ = session.handle(RakSessionInput::DisconnectNow(SystemTime::now()));
+                        }
+                    },
                     _ = &mut timer => {
                         let now = SystemTime::now();
 
@@ -83,7 +92,13 @@ impl RakSession {
                                 continue;
                             }
 
-                            let _ = buf_tx.send(buf);
+                            if let Err(TrySendError::Full(_)) = buf_tx.try_send(buf) {
+                                debug!(
+                                    "closing session with {addr}, its packets are not being read"
+                                );
+                                let _ = session
+                                    .handle(RakSessionInput::DisconnectNow(SystemTime::now()));
+                            }
                         }
                         RakSessionOutput::Disconnected(..) => {
                             let _ = disconnect_tx.send(id);
@@ -188,5 +203,50 @@ mod tests {
         let (session, _input_tx) = RakSession::spawn(session, datagram_tx, disconnect_tx);
 
         assert_eq!(session.max_message_len(), 1 << 20);
+    }
+
+    #[tokio::test]
+    async fn a_session_whose_packets_are_never_read_is_closed() {
+        let local = RakSessionIntl::new(
+            RakSessionId(7),
+            "127.0.0.1:1".parse().unwrap(),
+            0,
+            1492,
+            |_| {},
+        );
+        let mut peer = RakSessionIntl::new(
+            RakSessionId(8),
+            "127.0.0.1:2".parse().unwrap(),
+            1,
+            1492,
+            |_| {},
+        );
+        let (datagram_tx, _datagram_rx) = unbounded_channel();
+        let (disconnect_tx, mut disconnect_rx) = unbounded_channel();
+        let (_session, input_tx) = RakSession::spawn(local, datagram_tx, disconnect_tx);
+
+        let now = SystemTime::now();
+        for _ in 0..SESSION_QUEUE_CAPACITY + 64 {
+            peer.handle(RakSessionInput::Send(
+                Box::new([0xFE, 1]),
+                RakReliability::Unreliable,
+                RakPriority::Immediate,
+                now,
+            ))
+            .unwrap();
+            while let Some(out) = peer.poll() {
+                if let RakSessionOutput::Datagram(buf, _) = out
+                    && input_tx
+                        .send(RakSessionInput::Datagram(buf, now))
+                        .await
+                        .is_err()
+                {
+                    break;
+                }
+            }
+        }
+
+        let closed = tokio::time::timeout(Duration::from_secs(5), disconnect_rx.recv()).await;
+        assert!(matches!(closed, Ok(Some(RakSessionId(7)))));
     }
 }

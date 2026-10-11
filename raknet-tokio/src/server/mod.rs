@@ -16,7 +16,8 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, SystemTime};
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::mpsc::{Sender, unbounded_channel};
 use tokio::time::{Instant, MissedTickBehavior, interval};
 use tracing::debug;
 
@@ -95,8 +96,7 @@ impl RakServer {
             let mut msg_rx = msg_rx;
 
             async move {
-                let mut sessions: HashMap<RakSessionId, UnboundedSender<RakSessionInput>> =
-                    HashMap::new();
+                let mut sessions: HashMap<RakSessionId, Sender<RakSessionInput>> = HashMap::new();
 
                 let mut buf = vec![0u8; config.max_mtu_size as usize].into_boxed_slice();
                 let mut server = RakServerIntl::new(config, addr);
@@ -169,7 +169,7 @@ impl RakServer {
                                     let now = SystemTime::now();
 
                                     for session in sessions.values() {
-                                        let _ = session.send(RakSessionInput::Disconnect(now));
+                                        let _ = session.try_send(RakSessionInput::Disconnect(now));
                                     }
 
                                     stop_deadline = Some(
@@ -189,7 +189,11 @@ impl RakServer {
                                 if let Some(session) = sessions.get_mut(&id) {
                                     let now = SystemTime::now();
 
-                                    let _ = session.send(RakSessionInput::Datagram(buf, now));
+                                    let input = RakSessionInput::Datagram(buf, now);
+                                    if let Err(TrySendError::Full(_)) = session.try_send(input) {
+                                        debug!("closing session {id:?}, its input queue is full");
+                                        sessions.remove(&id);
+                                    }
                                 } else {
                                     debug!("no session found with id {id:?}");
                                 }
@@ -206,7 +210,8 @@ impl RakServer {
                                 );
 
                                 if stop_deadline.is_some() {
-                                    let _ = tx.send(RakSessionInput::Disconnect(SystemTime::now()));
+                                    let _ =
+                                        tx.try_send(RakSessionInput::Disconnect(SystemTime::now()));
                                     sessions.insert(id, tx);
                                     continue;
                                 }
