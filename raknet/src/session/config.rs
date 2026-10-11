@@ -9,6 +9,7 @@ pub struct RakSessionConfig {
     pub autoflush: bool,
     pub autoflush_interval_ms: Duration,
     pub max_queued_bytes: i32,
+    pub max_outbound_bytes: i32,
     pub close_timeout: Duration,
 }
 
@@ -19,6 +20,7 @@ impl Default for RakSessionConfig {
             autoflush: AUTOFLUSH,
             autoflush_interval_ms: Duration::from_millis(AUTOFLUSH_INTERVAL_MS as u64),
             max_queued_bytes: MAX_QUEUED_BYTES,
+            max_outbound_bytes: MAX_QUEUED_BYTES,
             close_timeout: CLOSE_TIMEOUT,
         }
     }

@@ -16,4 +16,5 @@ pub enum RakDisconnectReason {
     Timeout,
     Remote,
     ProtocolViolation,
+    OutboundBytesExceeded,
 }

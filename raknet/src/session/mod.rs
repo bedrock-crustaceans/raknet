@@ -70,6 +70,7 @@ pub struct RakSession {
     pub(crate) outbound_rel: u32,
     outbound_queue: [VecDeque<Frame>; 4],
     outbound_cache: HashMap<u32, FrameSet>,
+    outbound_bytes: usize,
     outbound_resend: BinaryHeap<(Reverse<SystemTime>, u32)>,
     outbound_ord_idx: [u32; 32],
     outbound_seq_idx: [u32; 32],
@@ -202,6 +203,14 @@ impl RakSession {
             outbound_queue[channel] = frames.into();
         }
 
+        let outbound_cache: HashMap<u32, FrameSet> = snapshot.outbound_cache.into_iter().collect();
+        let outbound_bytes = outbound_queue
+            .iter()
+            .flatten()
+            .map(Frame::size_hint)
+            .chain(outbound_cache.values().map(FrameSet::size_hint))
+            .sum();
+
         let inbound_spl_queue = rebuild_nested(snapshot.inbound_spl_queue);
         let inbound_spl_bytes = payload_bytes(&inbound_spl_queue);
         let inbound_spl_last = inbound_spl_queue
@@ -246,7 +255,8 @@ impl RakSession {
             outbound_spl: snapshot.outbound_spl,
             outbound_rel: snapshot.outbound_rel,
             outbound_queue,
-            outbound_cache: snapshot.outbound_cache.into_iter().collect(),
+            outbound_cache,
+            outbound_bytes,
             outbound_resend: snapshot
                 .outbound_resend
                 .into_iter()
@@ -333,6 +343,15 @@ impl Sans for RakSession {
             RakSessionInput::Send(..) if self.state == RakSessionState::Closing => {
                 return Err(RakSessionError::Closed);
             }
+            RakSessionInput::Send(buf, _, _, now)
+                if self.outbound_bytes + buf.len() > self.config.max_outbound_bytes as usize =>
+            {
+                debug!(
+                    "closing session with {}, queued outbound bytes would exceed max_outbound_bytes",
+                    self.addr
+                );
+                self.disconnect(true, RakDisconnectReason::OutboundBytesExceeded, now)?
+            }
             RakSessionInput::Send(buf, reliability, priority, now) => {
                 self.send_frame(Frame::new(reliability, buf), priority, now)?
             }
@@ -395,6 +414,7 @@ impl RakSession {
                 VecDeque::new(),
             ],
             outbound_cache: HashMap::new(),
+            outbound_bytes: 0,
             outbound_resend: BinaryHeap::new(),
             outbound_ord_idx: [0; 32],
             outbound_seq_idx: [0; 32],
@@ -424,6 +444,10 @@ impl RakSession {
 
     pub fn rtt(&self) -> Duration {
         self.congestion_controller.rtt()
+    }
+
+    pub fn outbound_bytes(&self) -> usize {
+        self.outbound_bytes
     }
 
     pub fn max_message_len(&self) -> usize {
@@ -607,6 +631,7 @@ impl RakSession {
                 .resent(self.outbound_seq, self.bandwidth_limited);
 
             let set = self.outbound_cache.remove(&seq).expect("unreachable");
+            self.outbound_bytes = self.outbound_bytes.saturating_sub(set.size_hint());
             pending.push(set);
         }
 
@@ -623,6 +648,7 @@ impl RakSession {
         for queue in &mut self.outbound_queue {
             while let Some(frame) = queue.pop_front_if(|f| f.size_hint() <= bandwidth) {
                 bandwidth -= frame.size_hint();
+                self.outbound_bytes = self.outbound_bytes.saturating_sub(frame.size_hint());
                 frames.push(frame);
             }
         }
@@ -723,6 +749,7 @@ impl RakSession {
             }
             self.outbound_resend
                 .push((Reverse(resend), frameset.sequence));
+            self.outbound_bytes += frameset.size_hint();
             self.outbound_cache.insert(frameset.sequence, frameset);
         }
         Ok(())
@@ -832,7 +859,10 @@ impl RakSession {
                     self.send_frame_set(set, true, true, now)?;
                 }
             }
-            _ => self.outbound_queue[priority as usize].extend(frames),
+            _ => {
+                self.outbound_bytes += frames.iter().map(Frame::size_hint).sum::<usize>();
+                self.outbound_queue[priority as usize].extend(frames);
+            }
         }
         Ok(())
     }
@@ -848,6 +878,7 @@ impl RakSession {
             let Some(set) = self.outbound_cache.remove(&seq) else {
                 continue;
             };
+            self.outbound_bytes = self.outbound_bytes.saturating_sub(set.size_hint());
             match ack.is_nack {
                 true => {
                     self.congestion_controller
@@ -2116,5 +2147,54 @@ mod tests {
 
         assert!(result.is_ok(), "update while closing failed: {result:?}");
         assert!(payloads_of(&drain_outputs(&mut a)).contains(&payload));
+    }
+
+    #[test]
+    fn unacknowledged_sends_beyond_max_outbound_bytes_close_the_session() {
+        let mut session = session(0, 1);
+        session.config.max_outbound_bytes = 64 * 1024;
+        let now = SystemTime::now();
+
+        for _ in 0..100 {
+            let send = RakSessionInput::Send(
+                vec![0xFE; 1024].into_boxed_slice(),
+                RakReliability::ReliableOrdered,
+                RakPriority::Normal,
+                now,
+            );
+            if session.handle(send).is_err() {
+                break;
+            }
+            session.tick(now).unwrap();
+        }
+
+        assert_eq!(session.state, RakSessionState::Disconnected);
+        assert_eq!(
+            disconnect_reason(&session),
+            Some(RakDisconnectReason::OutboundBytesExceeded)
+        );
+    }
+
+    #[test]
+    fn acknowledged_sends_release_outbound_bytes() {
+        let mut a = session(0, 1);
+        let mut b = session(1, 2);
+        let now = SystemTime::now();
+
+        a.handle(RakSessionInput::Send(
+            vec![0xFE; 1024].into_boxed_slice(),
+            RakReliability::ReliableOrdered,
+            RakPriority::Normal,
+            now,
+        ))
+        .unwrap();
+        assert!(a.outbound_bytes() >= 1024);
+
+        a.tick(now).unwrap();
+        deliver(&mut a, &mut b, now);
+        b.tick(now).unwrap();
+        deliver(&mut b, &mut a, now);
+
+        assert_eq!(a.outbound_bytes(), 0);
     }
 }
