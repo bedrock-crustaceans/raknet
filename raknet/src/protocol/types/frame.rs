@@ -163,7 +163,10 @@ mod tests {
 
         let mut encoded = Vec::new();
         frame.serialize(&mut encoded).unwrap();
-        assert_eq!(encoded, bytes, "encoding differs from go-raknet");
+        assert_eq!(
+            encoded, bytes,
+            "encoding differs from the RakNet wire layout"
+        );
         assert_eq!(Frame::deserialize(&mut Cursor::new(&bytes)).unwrap(), frame);
         assert_eq!(frame.size_hint(), bytes.len());
     }
