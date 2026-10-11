@@ -93,7 +93,7 @@ impl Ack {
 impl RakCodec for Ack {
     fn serialize<W: Write>(&self, writer: &mut W) -> Result<(), RakCodecError> {
         if self.sequences.len() > MAX_ACK_ENTRIES {
-            return Err(RakCodecError::TooManyAckEntries);
+            return Err(RakCodecError::AckEntryCountExceeded);
         }
 
         writer.write_u8(VALID | if self.is_nack { NACK } else { ACK })?;
@@ -156,7 +156,7 @@ impl RakCodec for Ack {
                 return Err(RakCodecError::Malformed("ack range invalid, end < start"));
             }
             if sequences.len() + (end - start) as usize >= MAX_ACK_ENTRIES {
-                return Err(RakCodecError::TooManyAckEntries);
+                return Err(RakCodecError::AckEntryCountExceeded);
             }
             sequences.extend(start..=end);
         }
@@ -223,7 +223,7 @@ mod tests {
         let decoded = Ack::deserialize(&mut buf.as_slice());
 
         assert!(
-            matches!(decoded, Err(RakCodecError::TooManyAckEntries)),
+            matches!(decoded, Err(RakCodecError::AckEntryCountExceeded)),
             "an ACK expanding to more than {MAX_ACK_ENTRIES} entries must be rejected, got {decoded:?}"
         );
     }
@@ -244,7 +244,7 @@ mod tests {
         let encoded = ack.serialize(&mut Vec::new());
 
         assert!(
-            matches!(encoded, Err(RakCodecError::TooManyAckEntries)),
+            matches!(encoded, Err(RakCodecError::AckEntryCountExceeded)),
             "encoding {} entries must be rejected like decoding them is, got {encoded:?}",
             ack.sequences.len()
         );
@@ -256,7 +256,7 @@ mod tests {
 
         let encoded = ack.serialize(&mut Vec::new());
 
-        assert!(matches!(encoded, Err(RakCodecError::TooManyAckEntries)));
+        assert!(matches!(encoded, Err(RakCodecError::AckEntryCountExceeded)));
     }
 
     #[test]

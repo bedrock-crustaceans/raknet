@@ -10,8 +10,8 @@ pub enum RakCodecError {
     UnexpectedMagic,
     #[error("Malformed: {0}")]
     Malformed(&'static str),
-    #[error("ACK expands to more than the allowed number of entries")]
-    TooManyAckEntries,
+    #[error("ACK entry count exceeds the entry limit")]
+    AckEntryCountExceeded,
     #[error("IO Error: {0}")]
     IOError(#[from] std::io::Error),
 }
