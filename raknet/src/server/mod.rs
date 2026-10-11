@@ -35,7 +35,7 @@ use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
 use std::hash::{BuildHasher, RandomState};
 use std::io::Cursor;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::debug;
 
@@ -601,7 +601,7 @@ impl RakServer {
         let accepted = ConnectionRequestAccepted {
             client_address: addr,
             system_index: 0,
-            system_addresses: vec![],
+            system_addresses: vec![SocketAddr::new(unspecified_ip_like(addr), 0); 10],
             request_timestamp: request.client_timestamp,
             timestamp: now.duration_since(UNIX_EPOCH)?.as_millis() as u64,
         };
@@ -628,6 +628,13 @@ impl RakServer {
         session.state = RakSessionState::Connected;
 
         Ok(())
+    }
+}
+
+fn unspecified_ip_like(addr: SocketAddr) -> IpAddr {
+    match addr {
+        SocketAddr::V4(_) => Ipv4Addr::UNSPECIFIED.into(),
+        SocketAddr::V6(_) => Ipv6Addr::UNSPECIFIED.into(),
     }
 }
 
@@ -1358,5 +1365,62 @@ mod tests {
             resent,
             "pending session never resent ConnectionRequestAccepted"
         );
+    }
+
+    fn accepted_reply_to(client_addr: SocketAddr) -> ConnectionRequestAccepted {
+        use crate::protocol::packets::frame_set::FrameSet;
+
+        let now = SystemTime::now();
+        let mut session = RakSession::new(
+            RakSessionId(0),
+            client_addr,
+            0,
+            constants::MAX_MTU_SIZE,
+            |_| {},
+        );
+        let request = ConnectionRequest {
+            client_guid: 1,
+            client_timestamp: 2,
+            security: false,
+        };
+        let mut buf = Vec::new();
+        request.serialize(&mut buf).unwrap();
+        RakServer::handle_connection_request(
+            &mut session,
+            client_addr,
+            &mut Cursor::new(&buf),
+            now,
+        )
+        .unwrap();
+        session.tick(now).unwrap();
+
+        std::iter::from_fn(|| session.poll())
+            .find_map(|out| match out {
+                RakSessionOutput::Datagram(buf, _) => Some(buf),
+                _ => None,
+            })
+            .map(|buf| FrameSet::deserialize(&mut Cursor::new(buf.as_ref())).unwrap())
+            .map(|set| {
+                ConnectionRequestAccepted::deserialize(&mut set.frames[0].payload.as_ref()).unwrap()
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn connection_request_accepted_carries_ten_system_addresses_of_the_client_family() {
+        for client_addr in ["127.0.0.1:2", "[::1]:2"] {
+            let client_addr: SocketAddr = client_addr.parse().unwrap();
+            let accepted = accepted_reply_to(client_addr);
+
+            assert_eq!(accepted.client_address, client_addr);
+            assert_eq!(accepted.system_addresses.len(), 10);
+            assert!(
+                accepted
+                    .system_addresses
+                    .iter()
+                    .all(|addr| addr.is_ipv4() == client_addr.is_ipv4())
+            );
+            assert_eq!(accepted.request_timestamp, 2);
+        }
     }
 }
