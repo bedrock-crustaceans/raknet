@@ -40,7 +40,7 @@ const DATAGRAM_WINDOW: usize = 2048;
 const ORDER_WINDOW: usize = 2048;
 const MAX_SPLIT_COUNT: u32 = 8192;
 const MAX_OUTBOUND_SPLIT_COUNT: usize = 2048;
-const MAX_CONCURRENT_SPLITS: usize = 16;
+const MAX_CONCURRENT_SPLITS: usize = 256;
 const SESSION_TIMEOUT: Duration = Duration::from_millis(15000);
 
 #[derive(Clone, Debug)]
@@ -1100,6 +1100,14 @@ impl RakSession {
             return self.disconnect(true, RakDisconnectReason::ProtocolViolation, now);
         }
 
+        if self.split_slots_full(frame.split_id) {
+            debug!(
+                "dropping split frame from {}, {} splits already in reassembly",
+                self.addr, MAX_CONCURRENT_SPLITS
+            );
+            return Ok(());
+        }
+
         if self.exceeds_queued_bytes(frame.payload.len()) {
             debug!(
                 "dropping split frame from {}, buffered split bytes would exceed max_queued_bytes",
@@ -1163,15 +1171,17 @@ impl RakSession {
         if frame.split_size > MAX_SPLIT_COUNT {
             return Some("split count exceeds the maximum");
         }
-        match self.inbound_spl_queue.get(&frame.split_id) {
-            Some(fragments) => fragments
-                .values()
-                .next()
-                .is_some_and(|f| f.split_size != frame.split_size)
-                .then_some("split count changed mid-split"),
-            None => (self.inbound_spl_queue.len() >= MAX_CONCURRENT_SPLITS)
-                .then_some("too many concurrent splits"),
-        }
+        self.inbound_spl_queue
+            .get(&frame.split_id)?
+            .values()
+            .next()
+            .is_some_and(|f| f.split_size != frame.split_size)
+            .then_some("split count changed mid-split")
+    }
+
+    fn split_slots_full(&self, split_id: u16) -> bool {
+        self.inbound_spl_queue.len() >= MAX_CONCURRENT_SPLITS
+            && !self.inbound_spl_queue.contains_key(&split_id)
     }
 
     fn handle_packet(&mut self, buf: Box<[u8]>, now: SystemTime) -> Result<(), RakSessionError> {
@@ -1698,7 +1708,7 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_splits_above_limit_close_the_session() {
+    fn concurrent_splits_above_limit_are_dropped() {
         let mut session = session(0, 1);
 
         let now = SystemTime::now();
@@ -1708,8 +1718,31 @@ mod tests {
                 .unwrap();
         }
 
-        assert!(session.inbound_spl_queue.len() <= MAX_CONCURRENT_SPLITS);
-        assert_closed_for_violation(&session);
+        assert_eq!(session.inbound_spl_queue.len(), MAX_CONCURRENT_SPLITS);
+        assert!(
+            !session
+                .inbound_spl_queue
+                .contains_key(&(MAX_CONCURRENT_SPLITS as u16))
+        );
+        assert_eq!(session.inbound_spl_bytes, MAX_CONCURRENT_SPLITS);
+        assert_eq!(disconnect_reason(&session), None);
+    }
+
+    #[test]
+    fn a_hundred_interleaved_splits_are_reassembled() {
+        let mut session = session(0, 1);
+
+        let now = SystemTime::now();
+        for split_index in 0..2 {
+            for split_id in 0..100 {
+                session
+                    .handle_frame(fragment(split_id, 2, split_index, &[0xFE]), now)
+                    .unwrap();
+            }
+        }
+
+        assert_eq!(packets(&mut session).len(), 100);
+        assert_eq!(disconnect_reason(&session), None);
     }
 
     #[test]
