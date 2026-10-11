@@ -24,6 +24,7 @@ use crate::protocol::packets::unconnected_ping::UnconnectedPing;
 use crate::protocol::packets::unconnected_pong::UnconnectedPong;
 use crate::sans::Sans;
 use crate::session::RakSessionId;
+use crate::util::socket_addr::get_overhead;
 use crate::util::{constants, packet_id};
 use std::cmp::min;
 use std::collections::VecDeque;
@@ -31,6 +32,8 @@ use std::io::Cursor;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::debug;
+
+const MTU_ATTEMPTS_PER_SIZE: usize = 4;
 
 #[derive(Clone, Debug)]
 pub struct RakClient {
@@ -354,13 +357,13 @@ impl RakClient {
     }
 
     fn send_open_connection_request_1(&mut self, addr: SocketAddr) -> Result<(), RakClientError> {
-        let index = self.attempts.min(constants::MTU_SIZES.len() - 1);
+        let index = (self.attempts / MTU_ATTEMPTS_PER_SIZE).min(constants::MTU_SIZES.len() - 1);
         let mtu = constants::MTU_SIZES[constants::MTU_SIZES.len() - 1 - index]
             .clamp(self.config.min_mtu_size, self.config.max_mtu_size);
 
         let req = OpenConnectionRequest1 {
             protocol: self.config.protocol,
-            mtu,
+            mtu: mtu.saturating_sub(constants::UDP_HEADER_SIZE + get_overhead(&addr)),
         };
 
         let mut buf = Vec::with_capacity(req.size_hint());
@@ -536,26 +539,36 @@ mod tests {
         len
     }
 
+    fn request_1_len(client: &mut RakClient, addr: SocketAddr, attempts: usize) -> u16 {
+        client.attempts = attempts;
+        client.send_open_connection_request_1(addr).unwrap();
+        last_datagram_len(client)
+    }
+
     #[test]
-    fn mtu_negotiation_starts_high_and_shrinks() {
+    fn mtu_negotiation_tries_each_size_four_times_from_the_top() {
         let mut client = RakClient::new(RakClientConfig::default());
         let addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
 
-        client.attempts = 0;
-        client.send_open_connection_request_1(addr).unwrap();
-        assert_eq!(last_datagram_len(&mut client), constants::MAX_MTU_SIZE);
+        let lens: Vec<u16> = (0..10)
+            .map(|attempts| request_1_len(&mut client, addr, attempts))
+            .collect();
 
-        client.attempts = 1;
-        client.send_open_connection_request_1(addr).unwrap();
-        assert_eq!(last_datagram_len(&mut client), 1200);
+        assert_eq!(
+            lens,
+            [1464, 1464, 1464, 1464, 1172, 1172, 1172, 1172, 372, 372]
+        );
+    }
 
-        client.attempts = 2;
-        client.send_open_connection_request_1(addr).unwrap();
-        assert_eq!(last_datagram_len(&mut client), constants::MIN_MTU_SIZE);
+    #[test]
+    fn request_1_leaves_room_for_the_ip_and_udp_headers() {
+        let mut client = RakClient::new(RakClientConfig::default());
 
-        client.attempts = 9;
-        client.send_open_connection_request_1(addr).unwrap();
-        assert_eq!(last_datagram_len(&mut client), constants::MIN_MTU_SIZE);
+        let v4 = request_1_len(&mut client, "127.0.0.1:19132".parse().unwrap(), 0);
+        let v6 = request_1_len(&mut client, "[::1]:19132".parse().unwrap(), 0);
+
+        assert_eq!(v4 + 20 + 8, constants::MAX_MTU_SIZE);
+        assert_eq!(v6 + 40 + 8, constants::MAX_MTU_SIZE);
     }
 
     #[test]
