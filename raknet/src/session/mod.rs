@@ -41,6 +41,8 @@ const ORDER_WINDOW: usize = 2048;
 const MAX_SPLIT_COUNT: u32 = 8192;
 const MAX_OUTBOUND_SPLIT_COUNT: usize = 2048;
 const MAX_CONCURRENT_SPLITS: usize = 256;
+const MAX_UNACKED_RELIABLE: i32 = 4096;
+const MAX_SPLITS_IN_FLIGHT: usize = 256;
 const SESSION_TIMEOUT: Duration = Duration::from_millis(15000);
 
 #[derive(Clone, Debug)]
@@ -652,10 +654,21 @@ impl RakSession {
 
     fn send_queue(&mut self, now: SystemTime) -> Result<(), RakSessionError> {
         let mut bandwidth = self.congestion_controller.transmission_bandwidth();
+        let oldest_reliable = self.oldest_unacked_reliable();
+        let mut splits_in_flight = self.splits_in_flight();
 
         let mut frames = Vec::new();
         for queue in &mut self.outbound_queue {
-            while let Some(frame) = queue.pop_front_if(|f| f.size_hint() <= bandwidth) {
+            while let Some(frame) = queue.pop_front_if(|f| {
+                f.size_hint() <= bandwidth
+                    && within_reliable_window(f, oldest_reliable)
+                    && (!f.is_split()
+                        || splits_in_flight.contains(&f.split_id)
+                        || splits_in_flight.len() < MAX_SPLITS_IN_FLIGHT)
+            }) {
+                if frame.is_split() {
+                    splits_in_flight.insert(frame.split_id);
+                }
                 bandwidth -= frame.size_hint();
                 self.outbound_bytes = self.outbound_bytes.saturating_sub(frame.size_hint());
                 frames.push(frame);
@@ -672,6 +685,25 @@ impl RakSession {
             self.send_frame_set(set, false, true, now)?;
         }
         Ok(())
+    }
+
+    fn oldest_unacked_reliable(&self) -> Option<u32> {
+        let cached = self.outbound_cache.values().flat_map(|set| &set.frames);
+        let queued = self.outbound_queue.iter().flatten();
+        cached
+            .chain(queued)
+            .filter(|f| f.reliability.is_reliable())
+            .map(|f| f.reliable_index)
+            .max_by_key(|&index| u24::distance(index, self.outbound_rel))
+    }
+
+    fn splits_in_flight(&self) -> HashSet<u16> {
+        self.outbound_cache
+            .values()
+            .flat_map(|set| &set.frames)
+            .filter(|f| f.is_split())
+            .map(|f| f.split_id)
+            .collect()
     }
 
     fn make_sets(&mut self, frames: Vec<Frame>) -> Vec<FrameSet> {
@@ -1278,6 +1310,15 @@ impl RakSession {
             .push_back(RakSessionOutput::Disconnected(self.id, reason));
 
         Ok(())
+    }
+}
+
+fn within_reliable_window(frame: &Frame, oldest: Option<u32>) -> bool {
+    match oldest {
+        Some(oldest) if frame.reliability.is_reliable() => {
+            u24::distance(oldest, frame.reliable_index) < MAX_UNACKED_RELIABLE
+        }
+        _ => true,
     }
 }
 
@@ -2325,6 +2366,83 @@ mod tests {
 
         assert_eq!(a.outbound_bytes(), 0);
         assert_eq!(a.rtt(), Duration::ZERO);
+    }
+
+    fn frames_of(datagrams: &[Box<[u8]>]) -> Vec<Frame> {
+        datagrams
+            .iter()
+            .filter(|buf| buf[0] & flags::VALID != 0 && buf[0] & (flags::ACK | flags::NACK) == 0)
+            .flat_map(|buf| {
+                FrameSet::deserialize(&mut Cursor::new(buf.as_ref()))
+                    .unwrap()
+                    .frames
+            })
+            .collect()
+    }
+
+    #[test]
+    fn reliable_sends_stop_4096_indices_past_the_oldest_unacknowledged() {
+        let mut a = session(0, 1);
+        let mut b = session(1, 2);
+        let now = SystemTime::now();
+
+        for _ in 0..6000 {
+            a.handle(RakSessionInput::Send(
+                Box::new([0xFE]),
+                RakReliability::Reliable,
+                RakPriority::Normal,
+                now,
+            ))
+            .unwrap();
+        }
+
+        let mut highest = 0;
+        for _ in 0..500 {
+            a.tick(now).unwrap();
+            let mut datagrams = datagrams_of(&drain_outputs(&mut a));
+            datagrams.retain(|buf| {
+                !frames_of(std::slice::from_ref(buf))
+                    .iter()
+                    .any(|f| f.reliable_index == 0)
+            });
+            for frame in frames_of(&datagrams) {
+                highest = highest.max(frame.reliable_index);
+            }
+            for buf in datagrams {
+                b.handle(RakSessionInput::Datagram(buf, now)).unwrap();
+            }
+            b.tick(now).unwrap();
+            deliver(&mut b, &mut a, now);
+        }
+
+        assert!(highest >= 4000, "the window never filled: {highest}");
+        assert!(
+            highest < 4096,
+            "sent reliable index {highest} with index 0 unacknowledged"
+        );
+    }
+
+    #[test]
+    fn no_new_split_starts_while_256_are_in_flight() {
+        let mut session = session(0, 1);
+        let now = SystemTime::now();
+
+        for split_id in 0..256u16 {
+            let mut frame = Frame::new(RakReliability::Reliable, Box::new([0]));
+            frame.split_id = 1_000 + split_id;
+            frame.split_size = 2;
+            let sequence = 1_000 + split_id as u32;
+            session.outbound_cache.insert(
+                sequence,
+                FrameSet::new(sequence, vec![frame], false, true, false),
+            );
+        }
+
+        let len = 4 * session.mtu as usize;
+        send(&mut session, len, now).unwrap();
+        session.tick(now).unwrap();
+
+        assert!(frames_of(&datagrams_of(&drain_outputs(&mut session))).is_empty());
     }
 
     #[test]
