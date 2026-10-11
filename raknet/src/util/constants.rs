@@ -13,6 +13,7 @@ pub const PACKET_LIMIT: i32 = 120;
 pub const TOTAL_PACKET_LIMIT: i32 = 100_000;
 
 pub const MAX_PENDING_CONNECTIONS: usize = 64;
+pub const MAX_PENDING_PER_IP: usize = 8;
 
 pub const CONNECTION_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(10_000);
 pub const CONNECTION_ATTEMPT_INTERVAL: Duration = Duration::from_millis(1_000);

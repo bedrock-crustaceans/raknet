@@ -190,6 +190,22 @@ impl RakServer {
             .saturating_sub(self.session_temp.len())
     }
 
+    fn counts_for_ip(&self, ip: IpAddr) -> (usize, usize) {
+        let ip = ip.to_canonical();
+        let mut pending = 0;
+        let mut established = 0;
+        for addr in self.session_map.keys() {
+            if addr.ip().to_canonical() != ip {
+                continue;
+            }
+            match self.session_temp.contains_key(addr) {
+                true => pending += 1,
+                false => established += 1,
+            }
+        }
+        (pending, established)
+    }
+
     fn forward_datagrams(&mut self, session: &mut RakSession) {
         while let Some(msg) = session.poll() {
             if let RakSessionOutput::Datagram(buf, addr) = msg {
@@ -537,8 +553,11 @@ impl RakServer {
             return Ok(());
         }
 
+        let (pending_from_ip, established_from_ip) = self.counts_for_ip(addr.ip());
         if self.established_count() >= self.config.max_connections
             || self.session_temp.len() >= self.config.max_pending_connections
+            || pending_from_ip >= self.config.max_pending_per_ip
+            || pending_from_ip + established_from_ip >= self.config.max_connections_per_ip
         {
             debug!("refusing connection from {} due to max connections", addr);
 
@@ -841,6 +860,60 @@ mod tests {
                 .any(|o| first_byte(o) == Some(packet_id::NO_FREE_INCOMING_CONNECTIONS))
         );
         assert_eq!(server.session_temp.len(), 1);
+    }
+
+    #[test]
+    fn one_ip_cannot_hold_more_than_its_pending_slots() {
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let mut server = RakServer::new(RakServerConfig::default(), server_addr);
+        let per_ip = server.config.max_pending_per_ip as u16;
+
+        for port in 1..=per_ip {
+            open_pending(
+                &mut server,
+                server_addr,
+                SocketAddr::from(([127, 0, 0, 1], port)),
+            );
+        }
+        drain(&mut server);
+        open_pending(
+            &mut server,
+            server_addr,
+            SocketAddr::from(([127, 0, 0, 1], per_ip + 1)),
+        );
+
+        assert!(
+            drain(&mut server)
+                .iter()
+                .any(|o| first_byte(o) == Some(packet_id::NO_FREE_INCOMING_CONNECTIONS))
+        );
+        assert_eq!(server.session_temp.len(), per_ip as usize);
+
+        open_pending(&mut server, server_addr, "127.0.0.2:1".parse().unwrap());
+        assert_eq!(server.session_temp.len(), per_ip as usize + 1);
+    }
+
+    #[test]
+    fn one_ip_cannot_hold_more_than_its_connection_slots() {
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let mut server = RakServer::new(
+            RakServerConfig {
+                max_connections_per_ip: 1,
+                ..Default::default()
+            },
+            server_addr,
+        );
+        let now = SystemTime::now();
+
+        let clients = [
+            "127.0.0.1:1".parse().unwrap(),
+            "127.0.0.1:2".parse().unwrap(),
+            "127.0.0.2:1".parse().unwrap(),
+        ];
+        let sessions = connect_all(&mut server, server_addr, &clients, now);
+
+        assert_eq!(sessions.len(), 2);
+        assert!(sessions.iter().any(|s| s.addr.ip() == clients[2].ip()));
     }
 
     #[test]
