@@ -18,7 +18,7 @@ pub struct RakCongestionController {
 
     bytes_not_acknowledged: usize,
 
-    sent_times: HashMap<u32, SystemTime>,
+    sent_times: HashMap<u32, Option<SystemTime>>,
 }
 
 /// [`RakCongestionController`] in a serializable form.
@@ -34,7 +34,7 @@ pub struct RakCongestionSnapshot {
     pub rtt_estimate_ms: Option<f64>,
     pub rtt_deviation_ms: Option<f64>,
     pub bytes_not_acknowledged: usize,
-    pub sent_times: Vec<(u32, u64)>,
+    pub sent_times: Vec<(u32, Option<u64>)>,
 }
 
 impl RakCongestionController {
@@ -50,7 +50,7 @@ impl RakCongestionController {
             sent_times: self
                 .sent_times
                 .iter()
-                .map(|(seq, at)| (*seq, millis_since(epoch, *at)))
+                .map(|(seq, at)| (*seq, at.map(|at| millis_since(epoch, at))))
                 .collect(),
         }
     }
@@ -67,7 +67,7 @@ impl RakCongestionController {
             sent_times: snapshot
                 .sent_times
                 .into_iter()
-                .map(|(seq, offset)| (seq, epoch + Duration::from_millis(offset)))
+                .map(|(seq, offset)| (seq, offset.map(|ms| epoch + Duration::from_millis(ms))))
                 .collect(),
         }
     }
@@ -153,22 +153,10 @@ impl RakCongestionController {
 
     pub fn acked(&mut self, now: SystemTime, seq: u32, size: usize, bandwidth_limited: bool) {
         if let Some(sent_at) = self.sent_times.remove(&seq) {
-            let rtt_ms = now
-                .duration_since(sent_at)
-                .unwrap_or_default()
-                .as_secs_f64()
-                * 1000.0;
             self.bytes_not_acknowledged -= size;
 
-            if self.rtt_estimate_ms.is_infinite() {
-                self.rtt_estimate_ms = rtt_ms;
-                self.rtt_deviation_ms = rtt_ms;
-            } else {
-                let d = 0.05;
-                let diff = rtt_ms - self.rtt_estimate_ms;
-
-                self.rtt_estimate_ms += d * diff;
-                self.rtt_deviation_ms += d * (diff.abs() - self.rtt_deviation_ms);
+            if let Some(sent_at) = sent_at {
+                self.sample_rtt(now, sent_at);
             }
 
             if !bandwidth_limited {
@@ -198,9 +186,34 @@ impl RakCongestionController {
         }
     }
 
+    fn sample_rtt(&mut self, now: SystemTime, sent_at: SystemTime) {
+        let rtt_ms = now
+            .duration_since(sent_at)
+            .unwrap_or_default()
+            .as_secs_f64()
+            * 1000.0;
+
+        if self.rtt_estimate_ms.is_infinite() {
+            self.rtt_estimate_ms = rtt_ms;
+            self.rtt_deviation_ms = rtt_ms;
+        } else {
+            let d = 0.05;
+            let diff = rtt_ms - self.rtt_estimate_ms;
+
+            self.rtt_estimate_ms += d * diff;
+            self.rtt_deviation_ms += d * (diff.abs() - self.rtt_deviation_ms);
+        }
+    }
+
     pub fn sent(&mut self, seq: u32, size: usize, now: SystemTime) {
         self.bytes_not_acknowledged += size;
-        self.sent_times.insert(seq, now);
+        self.sent_times.insert(seq, Some(now));
+    }
+
+    pub fn resent_as(&mut self, old_seq: u32, new_seq: u32) {
+        if self.sent_times.remove(&old_seq).is_some() {
+            self.sent_times.insert(new_seq, None);
+        }
     }
 
     pub fn lost(&mut self, seq: u32, size: usize) {

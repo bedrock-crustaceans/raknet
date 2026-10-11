@@ -636,8 +636,11 @@ impl RakSession {
             self.congestion_controller
                 .resent(self.outbound_seq, self.bandwidth_limited);
 
-            let set = self.outbound_cache.remove(&seq).expect("unreachable");
+            let mut set = self.outbound_cache.remove(&seq).expect("unreachable");
             self.outbound_bytes = self.outbound_bytes.saturating_sub(set.size_hint());
+            set.sequence = self.outbound_seq;
+            self.outbound_seq = u24::add(self.outbound_seq, 1);
+            self.congestion_controller.resent_as(seq, set.sequence);
             pending.push(set);
         }
 
@@ -2270,6 +2273,58 @@ mod tests {
         assert_eq!(session.outbound_bytes(), 0);
         assert_ne!(session.state, RakSessionState::Disconnected);
         send(&mut session, len - 1, now).unwrap();
+    }
+
+    fn sequences_of(outputs: &[RakSessionOutput]) -> Vec<u32> {
+        datagrams_of(outputs)
+            .iter()
+            .filter(|buf| buf[0] & flags::VALID != 0 && buf[0] & (flags::ACK | flags::NACK) == 0)
+            .map(|buf| {
+                FrameSet::deserialize(&mut Cursor::new(buf.as_ref()))
+                    .unwrap()
+                    .sequence
+            })
+            .collect()
+    }
+
+    #[test]
+    fn resends_use_a_fresh_sequence_number() {
+        let mut a = session(0, 1);
+        let now = SystemTime::now();
+
+        send(&mut a, 16, now).unwrap();
+        a.tick(now).unwrap();
+        let first = sequences_of(&drain_outputs(&mut a));
+        let queued = a.outbound_bytes();
+
+        let later = now + Duration::from_secs(5);
+        a.tick(later).unwrap();
+        let resent = sequences_of(&drain_outputs(&mut a));
+
+        assert_eq!(first.len(), 1);
+        assert_eq!(resent.len(), 1);
+        assert_ne!(resent[0], first[0]);
+        assert_eq!(a.outbound_bytes(), queued);
+    }
+
+    #[test]
+    fn acks_of_resent_datagrams_do_not_sample_the_rtt() {
+        let mut a = session(0, 1);
+        let mut b = session(1, 2);
+        let now = SystemTime::now();
+
+        send(&mut a, 16, now).unwrap();
+        a.tick(now).unwrap();
+        drain_outputs(&mut a);
+
+        let later = now + Duration::from_secs(5);
+        a.tick(later).unwrap();
+        deliver(&mut a, &mut b, later);
+        b.tick(later).unwrap();
+        deliver(&mut b, &mut a, later);
+
+        assert_eq!(a.outbound_bytes(), 0);
+        assert_eq!(a.rtt(), Duration::ZERO);
     }
 
     #[test]
