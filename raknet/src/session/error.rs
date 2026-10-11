@@ -10,4 +10,6 @@ pub enum RakSessionError {
     SystemTimeError(#[from] SystemTimeError),
     #[error("Closed")]
     Closed,
+    #[error("message of {0} bytes exceeds the send limit")]
+    MessageSizeExceeded(usize),
 }

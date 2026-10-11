@@ -38,7 +38,8 @@ pub struct RakSessionId(pub u64);
 const RELIABLE_WINDOW: usize = 8192;
 const DATAGRAM_WINDOW: usize = 2048;
 const ORDER_WINDOW: usize = 2048;
-const MAX_SPLIT_COUNT: u32 = 512;
+const MAX_SPLIT_COUNT: u32 = 8192;
+const MAX_OUTBOUND_SPLIT_COUNT: usize = 2048;
 const MAX_CONCURRENT_SPLITS: usize = 16;
 const SESSION_TIMEOUT: Duration = Duration::from_millis(15000);
 
@@ -343,6 +344,9 @@ impl Sans for RakSession {
             RakSessionInput::Send(..) if self.state == RakSessionState::Closing => {
                 return Err(RakSessionError::Closed);
             }
+            RakSessionInput::Send(buf, ..) if buf.len() > self.max_message_len() => {
+                return Err(RakSessionError::MessageSizeExceeded(buf.len()));
+            }
             RakSessionInput::Send(buf, _, _, now)
                 if self.outbound_bytes + buf.len() > self.config.max_outbound_bytes as usize =>
             {
@@ -451,8 +455,10 @@ impl RakSession {
     }
 
     pub fn max_message_len(&self) -> usize {
+        let split_limit = MAX_OUTBOUND_SPLIT_COUNT * (self.mtu - DGRAM_MTU_OVERHEAD) as usize;
         usize::try_from(self.config.max_queued_bytes)
             .unwrap_or(0)
+            .min(split_limit)
             .max(self.mtu as usize)
     }
 
@@ -1353,7 +1359,7 @@ mod tests {
     }
 
     #[test]
-    fn max_message_len_is_the_queued_byte_budget() {
+    fn max_message_len_is_the_outbound_split_limit() {
         let session = RakSession::new(
             RakSessionId(0),
             "127.0.0.1:19132".parse().unwrap(),
@@ -1364,7 +1370,7 @@ mod tests {
 
         assert_eq!(
             session.max_message_len(),
-            crate::util::constants::MAX_QUEUED_BYTES as usize
+            MAX_OUTBOUND_SPLIT_COUNT * (session.mtu - DGRAM_MTU_OVERHEAD) as usize
         );
     }
 
@@ -2173,6 +2179,64 @@ mod tests {
             disconnect_reason(&session),
             Some(RakDisconnectReason::OutboundBytesExceeded)
         );
+    }
+
+    fn send(session: &mut RakSession, len: usize, now: SystemTime) -> Result<(), RakSessionError> {
+        session.handle(RakSessionInput::Send(
+            vec![0xFE; len].into_boxed_slice(),
+            RakReliability::ReliableOrdered,
+            RakPriority::Normal,
+            now,
+        ))
+    }
+
+    #[test]
+    fn a_one_mib_send_reaches_our_own_receiver() {
+        let mut a = session(0, 1);
+        let mut b = session(1, 2);
+        let now = SystemTime::now();
+
+        send(&mut a, 1024 * 1024, now).unwrap();
+
+        let mut received = Vec::new();
+        let mut reason = None;
+        for step in 0..10_000 {
+            let now = now + Duration::from_millis(step * 10);
+            a.tick(now).unwrap();
+            deliver(&mut a, &mut b, now);
+            b.tick(now).unwrap();
+            let outputs = drain_outputs(&mut b);
+            reason = reason.or(disconnect_reason_of(&outputs));
+            for buf in datagrams_of(&outputs) {
+                a.handle(RakSessionInput::Datagram(buf, now)).unwrap();
+            }
+            received.extend(outputs.into_iter().filter_map(|out| match out {
+                RakSessionOutput::Packet(buf) => Some(buf),
+                _ => None,
+            }));
+            if !received.is_empty() || b.state == RakSessionState::Disconnected {
+                break;
+            }
+        }
+
+        assert_eq!(reason, None);
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].len(), 1024 * 1024);
+    }
+
+    #[test]
+    fn sends_over_max_message_len_are_refused() {
+        let mut session = session(0, 1);
+        let now = SystemTime::now();
+        let len = session.max_message_len() + 1;
+
+        assert!(matches!(
+            send(&mut session, len, now),
+            Err(RakSessionError::MessageSizeExceeded(n)) if n == len
+        ));
+        assert_eq!(session.outbound_bytes(), 0);
+        assert_ne!(session.state, RakSessionState::Disconnected);
+        send(&mut session, len - 1, now).unwrap();
     }
 
     #[test]
