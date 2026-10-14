@@ -5,19 +5,24 @@ use std::time::Duration;
 #[derive(Clone, Debug)]
 pub struct RakServerConfig {
     pub max_ordering_channels: i32,
+
     pub guid: u64,
     pub protocols: Box<[u8]>,
+
     pub max_connections: usize,
-    pub max_pending_connections: usize,
-    pub max_pending_per_ip: usize,
-    pub max_connections_per_ip: usize,
+    pub max_connections_per_ip: Option<usize>,
+
     pub message: Box<[u8]>,
+
     pub min_mtu_size: u16,
     pub max_mtu_size: u16,
+
     pub packet_limit: i32,
     pub total_packet_limit: i32,
     pub online_packet_limit: i32,
+
     pub block_duration: Duration,
+
     pub security: bool,
     pub cookies: bool,
     pub require_dialled_port: bool,
@@ -27,19 +32,24 @@ impl Default for RakServerConfig {
     fn default() -> RakServerConfig {
         Self {
             max_ordering_channels: constants::MAX_ORDERING_CHANNELS,
+
             guid: random(),
             protocols: Box::new([constants::PROTOCOL]),
+
             max_connections: 10,
-            max_pending_connections: constants::MAX_PENDING_CONNECTIONS,
-            max_pending_per_ip: constants::MAX_PENDING_PER_IP,
-            max_connections_per_ip: usize::MAX,
+            max_connections_per_ip: None,
+
             message: Box::new([]),
+
             min_mtu_size: constants::MIN_MTU_SIZE,
             max_mtu_size: constants::MAX_MTU_SIZE,
+
             packet_limit: constants::PACKET_LIMIT,
             total_packet_limit: constants::TOTAL_PACKET_LIMIT,
             online_packet_limit: constants::ONLINE_PACKET_LIMIT,
+
             block_duration: constants::BLOCK_DURATION,
+
             security: false,
             cookies: true,
             require_dialled_port: false,

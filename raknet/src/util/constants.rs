@@ -15,9 +15,6 @@ pub const ONLINE_PACKET_LIMIT: i32 = 120;
 pub const ONLINE_RATE_LIMIT_WINDOW: Duration = Duration::from_millis(10);
 pub const BLOCK_DURATION: Duration = Duration::from_secs(10);
 
-pub const MAX_PENDING_CONNECTIONS: usize = 64;
-pub const MAX_PENDING_PER_IP: usize = 8;
-
 pub const CONNECTION_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(10_000);
 pub const CONNECTION_ATTEMPT_INTERVAL: Duration = Duration::from_millis(1_000);
 pub const CONNECTION_ATTEMPT_MAX: usize = 10;

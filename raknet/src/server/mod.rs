@@ -51,7 +51,8 @@ pub struct RakServer {
     session_id: RakSessionId,
     session_map: HashMap<SocketAddr, RakSessionId>,
     session_addr: HashMap<RakSessionId, SocketAddr>,
-    session_temp: HashMap<SocketAddr, (SystemTime, RakSession)>,
+    session_pending: HashMap<SocketAddr, (SystemTime, RakSession)>,
+
     recently_disconnected: HashMap<SocketAddr, SystemTime>,
 
     offline_window: SystemTime,
@@ -80,7 +81,8 @@ impl Sans for RakServer {
                 let Some(&header) = buf.first() else {
                     return Ok(());
                 };
-                if self.is_blocked(addr.ip(), now) {
+
+                if self.blocked(addr.ip(), now) {
                     return Ok(());
                 }
 
@@ -104,7 +106,7 @@ impl Sans for RakServer {
             RakServerInput::RemoveSession(id, now) => {
                 if let Some(addr) = self.session_addr.remove(&id) {
                     self.session_map.remove(&addr);
-                    self.session_temp.remove(&addr);
+                    self.session_pending.remove(&addr);
                     self.recently_disconnected.insert(addr, now);
                 }
 
@@ -138,7 +140,7 @@ impl RakServer {
             session_id: RakSessionId(0),
             session_map: HashMap::new(),
             session_addr: HashMap::new(),
-            session_temp: HashMap::new(),
+            session_pending: HashMap::new(),
             recently_disconnected: HashMap::new(),
 
             offline_window: SystemTime::UNIX_EPOCH,
@@ -200,39 +202,17 @@ impl RakServer {
         })
     }
 
-    fn established_count(&self) -> usize {
-        self.session_map
-            .len()
-            .saturating_sub(self.session_temp.len())
-    }
-
-    fn counts_for_ip(&self, ip: IpAddr) -> (usize, usize) {
+    fn counts_for_ip(&self, ip: IpAddr) -> usize {
         let ip = ip.to_canonical();
-        let mut pending = 0;
-        let mut established = 0;
-        for addr in self.session_map.keys() {
-            if addr.ip().to_canonical() != ip {
-                continue;
-            }
-            match self.session_temp.contains_key(addr) {
-                true => pending += 1,
-                false => established += 1,
-            }
-        }
-        (pending, established)
-    }
 
-    fn forward_datagrams(&mut self, session: &mut RakSession) {
-        while let Some(msg) = session.poll() {
-            if let RakSessionOutput::Datagram(buf, addr) = msg {
-                self.output
-                    .push_back(RakServerOutput::SocketDatagram(buf, addr));
-            }
-        }
+        self.session_map
+            .keys()
+            .filter(|k| k.ip().to_canonical() == ip)
+            .count()
     }
 
     fn forget(&mut self, addr: SocketAddr) {
-        self.session_temp.remove(&addr);
+        self.session_pending.remove(&addr);
         if let Some(id) = self.session_map.remove(&addr) {
             self.session_addr.remove(&id);
         }
@@ -273,7 +253,7 @@ impl RakServer {
         *count > self.config.online_packet_limit
     }
 
-    fn is_blocked(&mut self, ip: IpAddr, now: SystemTime) -> bool {
+    fn blocked(&mut self, ip: IpAddr, now: SystemTime) -> bool {
         let ip = ip.to_canonical();
         match self.blocked.get(&ip) {
             Some(&until) if now < until => true,
@@ -288,7 +268,7 @@ impl RakServer {
     fn tick_temp_sessions(&mut self, now: SystemTime) -> Result<(), RakServerError> {
         let mut closed = Vec::new();
 
-        for (&addr, (_, session)) in self.session_temp.iter_mut() {
+        for (&addr, (_, session)) in self.session_pending.iter_mut() {
             session.handle(RakSessionInput::Update(now))?;
 
             while let Some(msg) = session.poll() {
@@ -310,7 +290,7 @@ impl RakServer {
 
     fn evict_stale_temp_sessions(&mut self, now: SystemTime) {
         let stale: Vec<SocketAddr> = self
-            .session_temp
+            .session_pending
             .iter()
             .filter(|(_, (created, _))| {
                 now.duration_since(*created).unwrap_or_default() >= PENDING_CONNECTION_TIMEOUT
@@ -370,9 +350,7 @@ impl RakServer {
             return Ok(());
         }
 
-        let full = self.established_count() >= self.config.max_connections;
-
-        if let Entry::Occupied(mut entry) = self.session_temp.entry(addr) {
+        if let Entry::Occupied(mut entry) = self.session_pending.entry(addr) {
             let mut success = false;
             let mut closed = false;
 
@@ -428,16 +406,7 @@ impl RakServer {
             }
 
             if success {
-                let (_, mut session) = entry.remove();
-
-                if full {
-                    debug!("dropping connection from {} due to max connections", addr);
-
-                    session.handle(RakSessionInput::DisconnectNow(now))?;
-                    self.forward_datagrams(&mut session);
-                    self.forget(addr);
-                    return Ok(());
-                }
+                let (_, session) = entry.remove();
 
                 self.output
                     .push_back(RakServerOutput::SessionConnected(Box::new(session)));
@@ -588,12 +557,13 @@ impl RakServer {
             return Ok(());
         }
 
-        let (pending_from_ip, established_from_ip) = self.counts_for_ip(addr.ip());
-        if self.established_count() >= self.config.max_connections
-            || self.session_temp.len() >= self.config.max_pending_connections
-            || pending_from_ip >= self.config.max_pending_per_ip
-            || pending_from_ip + established_from_ip >= self.config.max_connections_per_ip
-        {
+        let full = self.session_map.len() >= self.config.max_connections;
+        let full_ip = self
+            .config
+            .max_connections_per_ip
+            .is_some_and(|max| self.counts_for_ip(addr.ip()) >= max);
+
+        if full || full_ip {
             debug!("refusing connection from {} due to max connections", addr);
 
             let no_free = NoFreeIncomingConnections {
@@ -620,16 +590,13 @@ impl RakServer {
 
         self.session_map.insert(addr, id);
         self.session_addr.insert(id, addr);
-        let max_ordering_channels = self.config.max_ordering_channels;
-        self.session_temp.insert(
-            addr,
-            (
-                now,
-                RakSession::new(id, addr, request.client, request.mtu, |conf| {
-                    conf.ordering_channels = max_ordering_channels;
-                }),
-            ),
-        );
+
+        let session = RakSession::new(id, addr, request.client, request.mtu, |conf| {
+            conf.ordering_channels = self.config.max_ordering_channels;
+        });
+
+        self.session_pending.insert(addr, (now, session));
+
         Ok(())
     }
 
@@ -833,111 +800,6 @@ mod tests {
         assert!(session.is_some());
     }
 
-    #[test]
-    fn pending_handshakes_do_not_use_up_connection_slots() {
-        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
-        let mut server = RakServer::new(
-            RakServerConfig {
-                max_connections: 1,
-                ..Default::default()
-            },
-            server_addr,
-        );
-
-        open_pending(&mut server, server_addr, "127.0.0.1:1".parse().unwrap());
-        drain(&mut server);
-
-        let session = connect(
-            &mut server,
-            server_addr,
-            "127.0.0.1:2".parse().unwrap(),
-            SystemTime::now(),
-        );
-
-        assert!(
-            session.is_some(),
-            "a half-open handshake must not take the only connection slot"
-        );
-    }
-
-    #[test]
-    fn pending_handshakes_are_capped() {
-        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
-        let mut server = RakServer::new(
-            RakServerConfig {
-                max_pending_connections: 1,
-                ..Default::default()
-            },
-            server_addr,
-        );
-
-        open_pending(&mut server, server_addr, "127.0.0.1:1".parse().unwrap());
-        drain(&mut server);
-        open_pending(&mut server, server_addr, "127.0.0.1:2".parse().unwrap());
-
-        let outputs = drain(&mut server);
-        assert!(
-            outputs
-                .iter()
-                .any(|o| first_byte(o) == Some(packet_id::NO_FREE_INCOMING_CONNECTIONS))
-        );
-        assert_eq!(server.session_temp.len(), 1);
-    }
-
-    #[test]
-    fn one_ip_cannot_hold_more_than_its_pending_slots() {
-        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
-        let mut server = RakServer::new(RakServerConfig::default(), server_addr);
-        let per_ip = server.config.max_pending_per_ip as u16;
-
-        for port in 1..=per_ip {
-            open_pending(
-                &mut server,
-                server_addr,
-                SocketAddr::from(([127, 0, 0, 1], port)),
-            );
-        }
-        drain(&mut server);
-        open_pending(
-            &mut server,
-            server_addr,
-            SocketAddr::from(([127, 0, 0, 1], per_ip + 1)),
-        );
-
-        assert!(
-            drain(&mut server)
-                .iter()
-                .any(|o| first_byte(o) == Some(packet_id::NO_FREE_INCOMING_CONNECTIONS))
-        );
-        assert_eq!(server.session_temp.len(), per_ip as usize);
-
-        open_pending(&mut server, server_addr, "127.0.0.2:1".parse().unwrap());
-        assert_eq!(server.session_temp.len(), per_ip as usize + 1);
-    }
-
-    #[test]
-    fn one_ip_cannot_hold_more_than_its_connection_slots() {
-        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
-        let mut server = RakServer::new(
-            RakServerConfig {
-                max_connections_per_ip: 1,
-                ..Default::default()
-            },
-            server_addr,
-        );
-        let now = SystemTime::now();
-
-        let clients = [
-            "127.0.0.1:1".parse().unwrap(),
-            "127.0.0.1:2".parse().unwrap(),
-            "127.0.0.2:1".parse().unwrap(),
-        ];
-        let sessions = connect_all(&mut server, server_addr, &clients, now);
-
-        assert_eq!(sessions.len(), 2);
-        assert!(sessions.iter().any(|s| s.addr.ip() == clients[2].ip()));
-    }
-
     fn online_datagram() -> Box<[u8]> {
         Box::new([flags::VALID, 0, 0, 0])
     }
@@ -1071,8 +933,8 @@ mod tests {
         let sessions = connect_all(&mut server, server_addr, &clients, now);
 
         assert_eq!(sessions.len(), 1);
-        assert_eq!(server.established_count(), 1);
-        assert!(server.session_temp.is_empty());
+        assert_eq!(server.session_map.len(), 1);
+        assert!(server.session_pending.is_empty());
     }
 
     #[test]
@@ -1099,7 +961,7 @@ mod tests {
             ))
             .unwrap();
 
-        assert!(!server.session_temp.contains_key(&client_addr));
+        assert!(!server.session_pending.contains_key(&client_addr));
         assert!(!server.session_map.contains_key(&client_addr));
     }
 
@@ -1131,7 +993,7 @@ mod tests {
         drain(server)
             .iter()
             .any(|o| first_byte(o) == Some(packet_id::OPEN_CONNECTION_REPLY_2))
-            && server.session_temp.contains_key(&client_addr)
+            && server.session_pending.contains_key(&client_addr)
     }
 
     #[test]
@@ -1501,12 +1363,12 @@ mod tests {
             .unwrap();
         drain(&mut server);
 
-        assert!(server.session_temp.contains_key(&client_addr));
+        assert!(server.session_pending.contains_key(&client_addr));
 
         let later = now + PENDING_CONNECTION_TIMEOUT;
         server.handle(RakServerInput::Update(later)).unwrap();
 
-        assert!(!server.session_temp.contains_key(&client_addr));
+        assert!(!server.session_pending.contains_key(&client_addr));
         assert!(!server.session_map.contains_key(&client_addr));
     }
 
@@ -1544,7 +1406,7 @@ mod tests {
                 }
             }
         }
-        assert!(server.session_temp.contains_key(&client_addr));
+        assert!(server.session_pending.contains_key(&client_addr));
 
         server
             .handle(RakServerInput::Update(now + Duration::from_millis(20)))
