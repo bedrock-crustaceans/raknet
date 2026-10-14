@@ -5,7 +5,7 @@ pub mod input;
 pub mod output;
 pub mod state;
 
-use crate::protocol::codec::RakCodec;
+use crate::protocol::codec::{RakCodec, RakCodecHelper};
 use crate::protocol::packets::ack::Ack;
 use crate::protocol::packets::connected_ping::ConnectedPing;
 use crate::protocol::packets::connected_pong::ConnectedPong;
@@ -492,13 +492,14 @@ impl RakSession {
                 timestamp: now.duration_since(UNIX_EPOCH)?.as_millis() as u64,
             };
 
-            let mut buf = Vec::with_capacity(ping.size_hint());
-            ping.serialize(&mut buf)?;
-            let buf = buf.into_boxed_slice();
-
             let reliability = RakReliability::Unreliable;
             let priority = RakPriority::Immediate;
-            self.handle(RakSessionInput::Send(buf, reliability, priority, now))?;
+            self.handle(RakSessionInput::Send(
+                ping.serialized()?,
+                reliability,
+                priority,
+                now,
+            ))?;
 
             self.last_ping = now;
         }
@@ -605,9 +606,7 @@ impl RakSession {
 
     fn queue_acks(&mut self, sequences: Vec<u32>, is_nack: bool) -> Result<(), RakSessionError> {
         for ack in Ack::split(sequences, is_nack, self.mtu as usize) {
-            let mut buf = Vec::with_capacity(ack.size_hint());
-            ack.serialize(&mut buf)?;
-            self.queue.push_back((buf.into_boxed_slice(), self.addr));
+            self.queue.push_back((ack.serialized()?, self.addr));
         }
         Ok(())
     }
@@ -767,9 +766,7 @@ impl RakSession {
         first_send: bool,
         now: SystemTime,
     ) -> Result<(), RakSessionError> {
-        let mut buf = Vec::with_capacity(frameset.size_hint());
-        frameset.serialize(&mut buf)?;
-        let buf = buf.into_boxed_slice();
+        let buf = frameset.serialized()?;
 
         match immediate {
             true => self
@@ -1246,13 +1243,14 @@ impl RakSession {
             timestamp: now.duration_since(UNIX_EPOCH)?.as_millis() as u64,
         };
 
-        let mut buf = Vec::with_capacity(pong.size_hint());
-        pong.serialize(&mut buf)?;
-        let buf = buf.into_boxed_slice();
-
         let reliability = RakReliability::Unreliable;
         let priority = RakPriority::Immediate;
-        _ = self.handle(RakSessionInput::Send(buf, reliability, priority, now));
+        _ = self.handle(RakSessionInput::Send(
+            pong.serialized()?,
+            reliability,
+            priority,
+            now,
+        ));
         Ok(())
     }
 
@@ -1295,11 +1293,7 @@ impl RakSession {
         if send {
             let disconnect = Disconnect;
 
-            let frame = Frame::new(RakReliability::ReliableOrdered, {
-                let mut buf = Vec::with_capacity(disconnect.size_hint());
-                disconnect.serialize(&mut buf)?;
-                buf.into_boxed_slice()
-            });
+            let frame = Frame::new(RakReliability::ReliableOrdered, disconnect.serialized()?);
 
             self.send_frame(frame, RakPriority::Immediate, now)?;
         }
@@ -1588,9 +1582,8 @@ mod tests {
 
     fn datagram(sequence: u32, frames: Vec<Frame>) -> RakSessionInput {
         let set = FrameSet::new(sequence, frames, false, true, false);
-        let mut buf = Vec::with_capacity(set.size_hint());
-        set.serialize(&mut buf).unwrap();
-        RakSessionInput::Datagram(buf.into_boxed_slice(), SystemTime::now())
+
+        RakSessionInput::Datagram(set.serialized().unwrap(), SystemTime::now())
     }
 
     fn unreliable(byte: u8) -> Vec<Frame> {
@@ -1838,7 +1831,7 @@ mod tests {
 
     #[test]
     fn counters_wrap_at_24_bits_in_both_directions() {
-        let near_top = crate::util::u24::MASK - 1;
+        let near_top = u24::MASK - 1;
 
         let mut sender = session(1, 1);
         sender.outbound_seq = near_top;

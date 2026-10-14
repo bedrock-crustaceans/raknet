@@ -12,7 +12,7 @@ use crate::client::state::RakClientState;
 use crate::prelude::{
     RakPriority, RakReliability, RakSession, RakSessionInput, RakSessionOutput, RakSessionState,
 };
-use crate::protocol::codec::RakCodec;
+use crate::protocol::codec::{RakCodec, RakCodecHelper};
 use crate::protocol::packets::connection_request::ConnectionRequest;
 use crate::protocol::packets::connection_request_accepted::ConnectionRequestAccepted;
 use crate::protocol::packets::new_incoming_connection::NewIncomingConnection;
@@ -68,12 +68,8 @@ impl Sans for RakClient {
                     client: self.config.guid,
                 };
 
-                let mut buf = Vec::with_capacity(ping.size_hint());
-                ping.serialize(&mut buf)?;
-                let buf = buf.into_boxed_slice();
-
                 self.output
-                    .push_back(RakClientOutput::SocketDatagram(buf, addr))
+                    .push_back(RakClientOutput::SocketDatagram(ping.serialized()?, addr))
             }
             RakClientInput::Connect(remote, now) => {
                 if !matches!(self.state, RakClientState::Unconnected) {
@@ -366,12 +362,8 @@ impl RakClient {
             mtu: mtu.saturating_sub(constants::UDP_HEADER_SIZE + get_overhead(&addr)),
         };
 
-        let mut buf = Vec::with_capacity(req.size_hint());
-        req.serialize(&mut buf)?;
-        let buf = buf.into_boxed_slice();
-
         self.output
-            .push_back(RakClientOutput::SocketDatagram(buf, addr));
+            .push_back(RakClientOutput::SocketDatagram(req.serialized()?, addr));
 
         Ok(())
     }
@@ -408,12 +400,8 @@ impl RakClient {
             client: self.config.guid,
         };
 
-        let mut buf = Vec::with_capacity(req.size_hint());
-        req.serialize(&mut buf)?;
-        let buf = buf.into_boxed_slice();
-
         self.output
-            .push_back(RakClientOutput::SocketDatagram(buf, addr));
+            .push_back(RakClientOutput::SocketDatagram(req.serialized()?, addr));
 
         Ok(())
     }
@@ -448,12 +436,8 @@ impl RakClient {
             client_guid: self.config.guid,
         };
 
-        let mut buf = Vec::with_capacity(req.size_hint());
-        req.serialize(&mut buf)?;
-        let buf = buf.into_boxed_slice();
-
         session.handle(RakSessionInput::Send(
-            buf,
+            req.serialized()?,
             RakReliability::ReliableOrdered,
             RakPriority::Immediate,
             now,
@@ -511,12 +495,8 @@ impl RakClient {
             server_timestamp: now.duration_since(UNIX_EPOCH)?.as_millis() as u64,
         };
 
-        let mut buf = Vec::with_capacity(incoming.size_hint());
-        incoming.serialize(&mut buf)?;
-        let buf = buf.into_boxed_slice();
-
         session.handle(RakSessionInput::Send(
-            buf,
+            incoming.serialized()?,
             RakReliability::ReliableOrdered,
             RakPriority::Immediate,
             now,
@@ -669,9 +649,7 @@ mod tests {
     }
 
     fn encoded(packet: impl RakCodec) -> Box<[u8]> {
-        let mut buf = Vec::with_capacity(packet.size_hint());
-        packet.serialize(&mut buf).unwrap();
-        buf.into_boxed_slice()
+        packet.serialized().unwrap()
     }
 
     fn reply_1(mtu: u16) -> Box<[u8]> {

@@ -194,15 +194,15 @@ impl RakCodec for Ack {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::codec::RakCodecHelper;
 
     #[test]
     fn roundtrip_contiguous_range() {
         let ack = Ack::new(vec![5, 6, 7], false);
 
-        let mut buf = Vec::with_capacity(ack.size_hint());
-        ack.serialize(&mut buf).unwrap();
+        let buf = ack.serialized().unwrap();
 
-        let decoded = Ack::deserialize(&mut buf.as_slice()).unwrap();
+        let decoded = Ack::deserialize(&mut buf.as_ref()).unwrap();
 
         assert_eq!(decoded.sequences, vec![5, 6, 7]);
     }

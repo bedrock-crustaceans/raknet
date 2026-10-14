@@ -3,7 +3,7 @@ pub mod error;
 pub mod input;
 pub mod output;
 
-use crate::protocol::codec::RakCodec;
+use crate::protocol::codec::{RakCodec, RakCodecHelper};
 use crate::protocol::packets::already_connected::AlreadyConnected;
 use crate::protocol::packets::connection_request::ConnectionRequest;
 use crate::protocol::packets::connection_request_accepted::ConnectionRequestAccepted;
@@ -467,12 +467,8 @@ impl RakServer {
             message: self.config.message.clone(),
         };
 
-        let mut buf = Vec::with_capacity(UnconnectedPong::size_hint(&pong));
-        UnconnectedPong::serialize(&pong, &mut buf)?;
-        let buf = buf.into_boxed_slice();
-
         self.output
-            .push_back(RakServerOutput::SocketDatagram(buf, addr));
+            .push_back(RakServerOutput::SocketDatagram(pong.serialized()?, addr));
         Ok(())
     }
 
@@ -498,12 +494,10 @@ impl RakServer {
                 constants::PROTOCOL
             );
 
-            let mut buf = Vec::with_capacity(IncompatibleProtocol::size_hint(&incompatible));
-            IncompatibleProtocol::serialize(&incompatible, &mut buf)?;
-            let buf = buf.into_boxed_slice();
-
-            self.output
-                .push_back(RakServerOutput::SocketDatagram(buf, addr));
+            self.output.push_back(RakServerOutput::SocketDatagram(
+                incompatible.serialized()?,
+                addr,
+            ));
 
             return Ok(());
         }
@@ -513,23 +507,21 @@ impl RakServer {
         {
             debug!("refusing connection from {} due to recent disconnect", addr);
 
-            let recent = IpRecentlyConnected {
+            let recently = IpRecentlyConnected {
                 guid: self.config.guid,
             };
 
-            let mut buf = Vec::with_capacity(recent.size_hint());
-            recent.serialize(&mut buf)?;
-            let buf = buf.into_boxed_slice();
-
-            self.output
-                .push_back(RakServerOutput::SocketDatagram(buf, addr));
+            self.output.push_back(RakServerOutput::SocketDatagram(
+                recently.serialized()?,
+                addr,
+            ));
 
             return Ok(());
         }
 
         self.rotate_cookie_salt(now);
 
-        let reply = OpenConnectionReply1 {
+        let reply1 = OpenConnectionReply1 {
             guid: self.config.guid,
             cookie: self
                 .config
@@ -539,12 +531,8 @@ impl RakServer {
                 .clamp(self.config.min_mtu_size, self.config.max_mtu_size),
         };
 
-        let mut buf = Vec::with_capacity(OpenConnectionReply1::size_hint(&reply));
-        OpenConnectionReply1::serialize(&reply, &mut buf)?;
-        let buf = buf.into_boxed_slice();
-
         self.output
-            .push_back(RakServerOutput::SocketDatagram(buf, addr));
+            .push_back(RakServerOutput::SocketDatagram(reply1.serialized()?, addr));
 
         Ok(())
     }
@@ -595,12 +583,8 @@ impl RakServer {
                 guid: self.config.guid,
             };
 
-            let mut buf = Vec::with_capacity(already.size_hint());
-            already.serialize(&mut buf)?;
-            let buf = buf.into_boxed_slice();
-
             self.output
-                .push_back(RakServerOutput::SocketDatagram(buf, addr));
+                .push_back(RakServerOutput::SocketDatagram(already.serialized()?, addr));
 
             return Ok(());
         }
@@ -613,16 +597,12 @@ impl RakServer {
         {
             debug!("refusing connection from {} due to max connections", addr);
 
-            let full = NoFreeIncomingConnections {
+            let no_free = NoFreeIncomingConnections {
                 guid: self.config.guid,
             };
 
-            let mut buf = Vec::with_capacity(full.size_hint());
-            full.serialize(&mut buf)?;
-            let buf = buf.into_boxed_slice();
-
             self.output
-                .push_back(RakServerOutput::SocketDatagram(buf, addr));
+                .push_back(RakServerOutput::SocketDatagram(no_free.serialized()?, addr));
 
             return Ok(());
         }
@@ -632,14 +612,10 @@ impl RakServer {
             addr, mtu
         );
 
-        let reply = OpenConnectionReply2::new(self.config.guid, addr, mtu, false);
-
-        let mut buf = Vec::with_capacity(OpenConnectionReply2::size_hint(&reply));
-        OpenConnectionReply2::serialize(&reply, &mut buf)?;
-        let buf = buf.into_boxed_slice();
+        let reply2 = OpenConnectionReply2::new(self.config.guid, addr, mtu, false);
 
         self.output
-            .push_back(RakServerOutput::SocketDatagram(buf, addr));
+            .push_back(RakServerOutput::SocketDatagram(reply2.serialized()?, addr));
 
         let id = self.session_id;
         self.session_id.0 += 1;
@@ -677,13 +653,13 @@ impl RakServer {
             timestamp: now.duration_since(UNIX_EPOCH)?.as_millis() as u64,
         };
 
-        let mut buf = Vec::with_capacity(ConnectionRequestAccepted::size_hint(&accepted));
-        ConnectionRequestAccepted::serialize(&accepted, &mut buf)?;
-        let buf = buf.into_boxed_slice();
+        session.handle(RakSessionInput::Send(
+            accepted.serialized()?,
+            RakReliability::ReliableOrdered,
+            RakPriority::Immediate,
+            now,
+        ))?;
 
-        let reliability = RakReliability::ReliableOrdered;
-        let priority = RakPriority::Immediate;
-        session.handle(RakSessionInput::Send(buf, reliability, priority, now))?;
         Ok(())
     }
 
@@ -730,9 +706,7 @@ mod tests {
 
     fn request_1(protocol: u8) -> Box<[u8]> {
         let req = OpenConnectionRequest1 { protocol, mtu: 100 };
-        let mut buf = Vec::with_capacity(req.size_hint());
-        req.serialize(&mut buf).unwrap();
-        buf.into_boxed_slice()
+        req.serialized().unwrap()
     }
 
     fn reply_cookie(server: &mut RakServer) -> Option<i32> {
@@ -755,9 +729,7 @@ mod tests {
             mtu: constants::MIN_MTU_SIZE,
             client,
         };
-        let mut buf = Vec::with_capacity(req.size_hint());
-        req.serialize(&mut buf).unwrap();
-        buf.into_boxed_slice()
+        req.serialized().unwrap()
     }
 
     use crate::client::RakClient;
@@ -1120,12 +1092,10 @@ mod tests {
         let mut frame = Frame::new(RakReliability::ReliableOrdered, Box::new([0xFE]));
         frame.order_index = 100_000;
         let set = FrameSet::new(0, vec![frame], false, true, false);
-        let mut buf = Vec::with_capacity(set.size_hint());
-        set.serialize(&mut buf).unwrap();
 
         server
             .handle(RakServerInput::Datagram(
-                buf.into_boxed_slice(),
+                set.serialized().unwrap(),
                 client_addr,
                 SystemTime::now(),
             ))
@@ -1293,9 +1263,8 @@ mod tests {
             timestamp: 0,
             client: 1,
         };
-        let mut buf = Vec::with_capacity(ping.size_hint());
-        ping.serialize(&mut buf).unwrap();
-        let buf = buf.into_boxed_slice();
+
+        let buf = ping.serialized().unwrap();
 
         let now = SystemTime::now();
         for _ in 0..5 {
@@ -1323,9 +1292,8 @@ mod tests {
             timestamp: 0,
             client: 1,
         };
-        let mut buf = Vec::with_capacity(ping.size_hint());
-        ping.serialize(&mut buf).unwrap();
-        let buf = buf.into_boxed_slice();
+
+        let buf = ping.serialized().unwrap();
 
         let now = SystemTime::now();
         for port in 1..=5 {
