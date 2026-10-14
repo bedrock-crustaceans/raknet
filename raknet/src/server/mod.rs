@@ -163,8 +163,7 @@ impl RakServer {
     /// ids independently, and is emitted as [`RakServerOutput::SessionConnected`] so it
     /// arrives through the same `poll()` path as one this server handshaked itself.
     pub fn adopt(&mut self, mut session: RakSession) {
-        let id = self.session_id;
-        self.session_id.0 += 1;
+        let id = self.session_id.increment();
 
         let addr = session.addr;
         session.id = id;
@@ -617,8 +616,7 @@ impl RakServer {
         self.output
             .push_back(RakServerOutput::SocketDatagram(reply2.serialized()?, addr));
 
-        let id = self.session_id;
-        self.session_id.0 += 1;
+        let id = self.session_id.increment();
 
         self.session_map.insert(addr, id);
         self.session_addr.insert(id, addr);

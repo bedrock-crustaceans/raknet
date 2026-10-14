@@ -35,6 +35,14 @@ use tracing::debug;
 #[derive(Default, Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub struct RakSessionId(pub u64);
 
+impl RakSessionId {
+    pub fn increment(&mut self) -> RakSessionId {
+        let old = *self;
+        self.0 += 1;
+        old
+    }
+}
+
 const RELIABLE_WINDOW: usize = 8192;
 const DATAGRAM_WINDOW: usize = 2048;
 const ORDER_WINDOW: usize = 2048;
