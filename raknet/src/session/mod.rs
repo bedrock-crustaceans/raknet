@@ -662,6 +662,7 @@ impl RakSession {
     fn send_queue(&mut self, now: SystemTime) -> Result<(), RakSessionError> {
         let mut bandwidth = self.congestion_controller.transmission_bandwidth();
         let oldest_reliable = self.oldest_unacked_reliable();
+        let oldest_ordered = self.oldest_unacked_ordered();
         let mut splits_in_flight = self.splits_in_flight();
 
         let mut frames = Vec::new();
@@ -669,6 +670,7 @@ impl RakSession {
             while let Some(frame) = queue.pop_front_if(|f| {
                 f.size_hint() <= bandwidth
                     && within_reliable_window(f, oldest_reliable)
+                    && within_ordered_window(f, &oldest_ordered)
                     && (!f.is_split()
                         || splits_in_flight.contains(&f.split_id)
                         || splits_in_flight.len() < MAX_SPLITS_IN_FLIGHT)
@@ -702,6 +704,23 @@ impl RakSession {
             .filter(|f| f.reliability.is_reliable())
             .map(|f| f.reliable_index)
             .max_by_key(|&index| u24::distance(index, self.outbound_rel))
+    }
+
+    /// Finds each channel's oldest outstanding ordered message, including queued fragments.
+    fn oldest_unacked_ordered(&self) -> [Option<u32>; 32] {
+        let mut oldest = [None; 32];
+        let cached = self.outbound_cache.values().flat_map(|set| &set.frames);
+        let queued = self.outbound_queue.iter().flatten();
+        for frame in cached.chain(queued).filter(|f| f.reliability.is_ordered()) {
+            let channel = frame.order_channel as usize;
+            let next = self.outbound_ord_idx[channel];
+            if oldest[channel].is_none_or(|index| {
+                u24::distance(frame.order_index, next) > u24::distance(index, next)
+            }) {
+                oldest[channel] = Some(frame.order_index);
+            }
+        }
+        oldest
     }
 
     fn splits_in_flight(&self) -> HashSet<u16> {
@@ -1319,6 +1338,16 @@ fn within_reliable_window(frame: &Frame, oldest: Option<u32>) -> bool {
     match oldest {
         Some(oldest) if frame.reliability.is_reliable() => {
             u24::distance(oldest, frame.reliable_index) < MAX_UNACKED_RELIABLE
+        }
+        _ => true,
+    }
+}
+
+/// Keeps new ordered messages inside the peer's window while an earlier message is unacknowledged.
+fn within_ordered_window(frame: &Frame, oldest: &[Option<u32>; 32]) -> bool {
+    match oldest[frame.order_channel as usize] {
+        Some(index) if frame.reliability.is_ordered() => {
+            u24::distance(index, frame.order_index) < ORDER_WINDOW as i32
         }
         _ => true,
     }
@@ -2379,6 +2408,95 @@ mod tests {
                     .frames
             })
             .collect()
+    }
+
+    #[test]
+    fn ordered_sends_wait_for_a_lost_message_before_exceeding_the_receive_window() {
+        for first_index in [0, u24::MASK - 100] {
+            let mut a = session(0, 1);
+            let mut b = session(1, 2);
+            let now = SystemTime::now();
+            // Establish enough congestion capacity for later datagrams to pass the loss.
+            for _ in 0..3000 {
+                a.handle(RakSessionInput::Send(
+                    Box::new([0xfe]),
+                    RakReliability::Reliable,
+                    RakPriority::Normal,
+                    now,
+                ))
+                .unwrap();
+            }
+            for _ in 0..100 {
+                a.tick(now).unwrap();
+                deliver(&mut a, &mut b, now);
+                packets(&mut b);
+                b.tick(now).unwrap();
+                deliver(&mut b, &mut a, now);
+                if a.outbound_bytes() == 0 {
+                    break;
+                }
+            }
+            assert_eq!(a.outbound_bytes(), 0);
+            a.outbound_ord_idx[0] = first_index;
+            b.inbound_ord_idx[0] = first_index;
+            let total = ORDER_WINDOW + 1000;
+            for index in 0..total {
+                let mut message = vec![0xfe];
+                message.extend_from_slice(&(index as u32).to_le_bytes());
+                a.handle(RakSessionInput::Send(
+                    message.into_boxed_slice(),
+                    RakReliability::ReliableOrdered,
+                    RakPriority::Normal,
+                    now,
+                ))
+                .unwrap();
+            }
+
+            let mut withheld = Vec::new();
+            let mut highest = 0;
+            for _ in 0..500 {
+                a.tick(now).unwrap();
+                for datagram in datagrams_of(&drain_outputs(&mut a)) {
+                    let frames = frames_of(std::slice::from_ref(&datagram));
+                    if frames.iter().any(|f| f.order_index == first_index) {
+                        withheld.push(datagram);
+                        continue;
+                    }
+                    for frame in frames {
+                        highest = highest.max(u24::distance(first_index, frame.order_index));
+                    }
+                    b.handle(RakSessionInput::Datagram(datagram, now)).unwrap();
+                    assert_eq!(b.get_state(), RakSessionState::Connected);
+                }
+                b.tick(now).unwrap();
+                deliver(&mut b, &mut a, now);
+            }
+            assert!(highest > ORDER_WINDOW as i32 - 100, "window never filled");
+            assert!(
+                highest < ORDER_WINDOW as i32,
+                "ordered gap exceeded receiver window"
+            );
+            assert!(packets(&mut b).is_empty());
+
+            for datagram in withheld {
+                b.handle(RakSessionInput::Datagram(datagram, now)).unwrap();
+            }
+            let mut received = packets(&mut b);
+            for _ in 0..500 {
+                b.tick(now).unwrap();
+                deliver(&mut b, &mut a, now);
+                a.tick(now).unwrap();
+                deliver(&mut a, &mut b, now);
+                received.extend(packets(&mut b));
+                if received.len() == total {
+                    break;
+                }
+            }
+            assert_eq!(received.len(), total);
+            for (index, message) in received.iter().enumerate() {
+                assert_eq!(&message[1..], &(index as u32).to_le_bytes());
+            }
+        }
     }
 
     #[test]
