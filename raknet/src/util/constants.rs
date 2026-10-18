@@ -28,6 +28,7 @@ pub const CC_MAX_THRESHOLD: i32 = 2000;
 pub const CC_ADDITIONAL_VARIANCE: i32 = 30;
 
 pub const MAX_QUEUED_BYTES: i32 = 67_108_864;
+pub const RELIABLE_WINDOW: i32 = 512;
 
 pub const MAGIC: [u8; 16] = [
     0x00, 0xFF, 0xFF, 0x00, 0xFE, 0xFE, 0xFE, 0xFE, 0xFD, 0xFD, 0xFD, 0xFD, 0x12, 0x34, 0x56, 0x78,

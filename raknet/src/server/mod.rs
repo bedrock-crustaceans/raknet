@@ -949,8 +949,7 @@ mod tests {
         open_pending(&mut server, server_addr, client_addr);
         drain(&mut server);
 
-        let mut frame = Frame::new(RakReliability::ReliableOrdered, Box::new([0xFE]));
-        frame.order_index = 100_000;
+        let frame = Frame::new(RakReliability::Reliable, Box::new([packet_id::DISCONNECT]));
         let set = FrameSet::new(0, vec![frame], false, true, false);
 
         server

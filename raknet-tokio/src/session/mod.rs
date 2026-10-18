@@ -195,14 +195,14 @@ mod tests {
             "127.0.0.1:19132".parse().unwrap(),
             0,
             1492,
-            |conf| conf.max_queued_bytes = 1 << 20,
+            |conf| conf.max_queued_bytes = 1 << 19,
         );
         let (datagram_tx, _datagram_rx) = unbounded_channel();
         let (disconnect_tx, _disconnect_rx) = unbounded_channel();
 
         let (session, _input_tx) = RakSession::spawn(session, datagram_tx, disconnect_tx);
 
-        assert_eq!(session.max_message_len(), 1 << 20);
+        assert_eq!(session.max_message_len(), 1 << 19);
     }
 
     #[tokio::test]
