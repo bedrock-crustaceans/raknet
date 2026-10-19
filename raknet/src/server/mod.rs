@@ -59,9 +59,9 @@ pub struct RakServer {
     offline_total: i32,
     offline_per_ip: HashMap<IpAddr, i32>,
 
-    online_window: SystemTime,
-    online_per_ip: HashMap<IpAddr, i32>,
+    online_buckets: HashMap<SocketAddr, TokenBucket>,
     blocked: HashMap<IpAddr, SystemTime>,
+    blocked_addrs: HashMap<SocketAddr, SystemTime>,
 
     cookie_key: RandomState,
     cookie_salts: [u64; 2],
@@ -82,7 +82,7 @@ impl Sans for RakServer {
                     return Ok(());
                 };
 
-                if self.blocked(addr.ip(), now) {
+                if self.blocked(addr.ip(), now) || self.blocked_addr(addr, now) {
                     return Ok(());
                 }
 
@@ -119,6 +119,10 @@ impl Sans for RakServer {
             RakServerInput::Update(now) => {
                 self.rotate_cookie_salt(now);
                 self.blocked.retain(|_, until| now < *until);
+                self.blocked_addrs.retain(|_, until| now < *until);
+                if let Some(rate) = self.config.online_packet_limit {
+                    self.online_buckets.retain(|_, bucket| !bucket.is_full(rate, now));
+                }
                 self.evict_stale_temp_sessions(now);
                 self.tick_temp_sessions(now)?;
             }
@@ -128,6 +132,39 @@ impl Sans for RakServer {
 
     fn poll(&mut self) -> Option<Self::Output> {
         self.output.pop_front()
+    }
+}
+
+struct TokenBucket {
+    tokens: f64,
+    updated: SystemTime,
+}
+
+impl TokenBucket {
+    fn full(rate: u32, now: SystemTime) -> Self {
+        Self {
+            tokens: rate as f64,
+            updated: now,
+        }
+    }
+
+    fn refilled(&self, rate: u32, now: SystemTime) -> f64 {
+        let elapsed = now.duration_since(self.updated).unwrap_or_default();
+        (self.tokens + elapsed.as_secs_f64() * rate as f64).min(rate as f64)
+    }
+
+    fn take(&mut self, rate: u32, now: SystemTime) -> bool {
+        self.tokens = self.refilled(rate, now);
+        self.updated = self.updated.max(now);
+        if self.tokens < 1.0 {
+            return false;
+        }
+        self.tokens -= 1.0;
+        true
+    }
+
+    fn is_full(&self, rate: u32, now: SystemTime) -> bool {
+        self.refilled(rate, now) >= rate as f64
     }
 }
 
@@ -146,9 +183,9 @@ impl RakServer {
             offline_window: SystemTime::UNIX_EPOCH,
             offline_total: 0,
             offline_per_ip: HashMap::new(),
-            online_window: SystemTime::UNIX_EPOCH,
-            online_per_ip: HashMap::new(),
+            online_buckets: HashMap::new(),
             blocked: HashMap::new(),
+            blocked_addrs: HashMap::new(),
 
             cookie_key: RandomState::new(),
             cookie_salts: [random(), random()],
@@ -240,17 +277,27 @@ impl RakServer {
         *count > self.config.packet_limit
     }
 
-    fn online_rate_limited(&mut self, ip: IpAddr, now: SystemTime) -> bool {
-        if now.duration_since(self.online_window).unwrap_or_default()
-            >= constants::ONLINE_RATE_LIMIT_WINDOW
-        {
-            self.online_window = now;
-            self.online_per_ip.clear();
-        }
+    fn online_rate_limited(&mut self, addr: SocketAddr, now: SystemTime) -> bool {
+        let Some(rate) = self.config.online_packet_limit else {
+            return false;
+        };
 
-        let count = self.online_per_ip.entry(ip.to_canonical()).or_insert(0);
-        *count += 1;
-        *count > self.config.online_packet_limit
+        let bucket = self
+            .online_buckets
+            .entry(addr)
+            .or_insert_with(|| TokenBucket::full(rate, now));
+        !bucket.take(rate, now)
+    }
+
+    fn blocked_addr(&mut self, addr: SocketAddr, now: SystemTime) -> bool {
+        match self.blocked_addrs.get(&addr) {
+            Some(&until) if now < until => true,
+            Some(_) => {
+                self.blocked_addrs.remove(&addr);
+                false
+            }
+            None => false,
+        }
     }
 
     fn blocked(&mut self, ip: IpAddr, now: SystemTime) -> bool {
@@ -340,13 +387,13 @@ impl RakServer {
         addr: SocketAddr,
         now: SystemTime,
     ) -> Result<(), RakServerError> {
-        if self.online_rate_limited(addr.ip(), now) {
+        if self.online_rate_limited(addr, now) {
             debug!(
                 "blocking {} for exceeding the online packet limit",
-                addr.ip()
+                addr
             );
-            self.blocked
-                .insert(addr.ip().to_canonical(), now + self.config.block_duration);
+            self.blocked_addrs
+                .insert(addr, now + self.config.block_duration);
             return Ok(());
         }
 
@@ -812,17 +859,17 @@ mod tests {
     }
 
     #[test]
-    fn a_flood_of_online_datagrams_blocks_the_ip_for_a_while() {
+    fn a_flood_of_online_datagrams_blocks_only_that_address_for_a_while() {
         let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
         let mut server = RakServer::new(RakServerConfig::default(), server_addr);
         let now = SystemTime::now();
         let flooder: SocketAddr = "127.0.0.1:1".parse().unwrap();
-        let bystander: SocketAddr = "127.0.0.2:1".parse().unwrap();
+        let bystander: SocketAddr = "127.0.0.1:2".parse().unwrap();
         connect_all(&mut server, server_addr, &[flooder, bystander], now);
         drain(&mut server);
-        let now = now + Duration::from_secs(1);
+        let now = now + Duration::from_secs(2);
 
-        let limit = server.config.online_packet_limit as usize;
+        let limit = server.config.online_packet_limit.unwrap() as usize;
         for _ in 0..limit * 2 {
             server
                 .handle(RakServerInput::Datagram(online_datagram(), flooder, now))
@@ -830,7 +877,7 @@ mod tests {
         }
         assert_eq!(session_datagrams(&mut server), limit);
 
-        let later = now + Duration::from_secs(1);
+        let later = now + Duration::from_millis(1500);
         for addr in [flooder, bystander] {
             server
                 .handle(RakServerInput::Datagram(online_datagram(), addr, later))
@@ -851,6 +898,68 @@ mod tests {
             ))
             .unwrap();
         assert_eq!(session_datagrams(&mut server), 1);
+    }
+
+    #[test]
+    fn a_steady_rate_within_the_limit_is_never_blocked() {
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let mut server = RakServer::new(RakServerConfig::default(), server_addr);
+        let start = SystemTime::now();
+        let client: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        connect_all(&mut server, server_addr, &[client], start);
+        drain(&mut server);
+
+        let limit = server.config.online_packet_limit.unwrap() as usize;
+        let seconds = 5;
+        for second in 1..=seconds {
+            let now = start + Duration::from_secs(second);
+            for _ in 0..limit {
+                server
+                    .handle(RakServerInput::Datagram(online_datagram(), client, now))
+                    .unwrap();
+            }
+        }
+        assert_eq!(session_datagrams(&mut server), limit * seconds as usize);
+    }
+
+    #[test]
+    fn idle_buckets_are_pruned_on_update() {
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let mut server = RakServer::new(RakServerConfig::default(), server_addr);
+        let now = SystemTime::now();
+        let client: SocketAddr = "127.0.0.1:1".parse().unwrap();
+
+        server
+            .handle(RakServerInput::Datagram(online_datagram(), client, now))
+            .unwrap();
+        assert_eq!(server.online_buckets.len(), 1);
+
+        server
+            .handle(RakServerInput::Update(now + Duration::from_secs(2)))
+            .unwrap();
+        assert!(server.online_buckets.is_empty());
+    }
+
+    #[test]
+    fn the_online_limit_can_be_disabled() {
+        let server_addr: SocketAddr = "127.0.0.1:19132".parse().unwrap();
+        let config = RakServerConfig {
+            online_packet_limit: None,
+            ..RakServerConfig::default()
+        };
+        let mut server = RakServer::new(config, server_addr);
+        let now = SystemTime::now();
+        let client: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        connect_all(&mut server, server_addr, &[client], now);
+        drain(&mut server);
+
+        let count = constants::ONLINE_PACKET_LIMIT as usize * 2;
+        for _ in 0..count {
+            server
+                .handle(RakServerInput::Datagram(online_datagram(), client, now))
+                .unwrap();
+        }
+        assert_eq!(session_datagrams(&mut server), count);
     }
 
     #[test]

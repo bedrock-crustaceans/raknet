@@ -19,7 +19,7 @@ pub struct RakServerConfig {
 
     pub packet_limit: i32,
     pub total_packet_limit: i32,
-    pub online_packet_limit: i32,
+    pub online_packet_limit: Option<u32>,
 
     pub block_duration: Duration,
 
@@ -46,7 +46,7 @@ impl Default for RakServerConfig {
 
             packet_limit: constants::PACKET_LIMIT,
             total_packet_limit: constants::TOTAL_PACKET_LIMIT,
-            online_packet_limit: constants::ONLINE_PACKET_LIMIT,
+            online_packet_limit: Some(constants::ONLINE_PACKET_LIMIT),
 
             block_duration: constants::BLOCK_DURATION,
 
