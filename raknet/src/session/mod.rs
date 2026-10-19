@@ -476,6 +476,18 @@ impl RakSession {
         self.outbound_bytes
     }
 
+    pub fn send_capacity(&self) -> usize {
+        let queued: usize = self
+            .outbound_queue
+            .iter()
+            .flatten()
+            .map(Frame::size_hint)
+            .sum();
+        self.congestion_controller
+            .transmission_bandwidth()
+            .saturating_sub(queued)
+    }
+
     pub fn max_message_len(&self) -> usize {
         let split_limit = MAX_OUTBOUND_SPLIT_COUNT * (self.mtu - DGRAM_MTU_OVERHEAD) as usize;
         usize::try_from(self.config.max_queued_bytes)
@@ -1594,6 +1606,28 @@ mod tests {
 
         assert_eq!(session.outbound_queue[RakPriority::High as usize].len(), 1);
         assert_eq!(session.outbound_queue[RakPriority::Low as usize].len(), 1);
+    }
+
+    #[test]
+    fn queued_frames_reduce_the_send_capacity() {
+        let mut session = RakSession::new(
+            RakSessionId(0),
+            "127.0.0.1:19132".parse().unwrap(),
+            0,
+            crate::util::constants::MAX_MTU_SIZE,
+            |_| {},
+        );
+        let before = session.send_capacity();
+
+        session
+            .send_frame(
+                Frame::new(RakReliability::Unreliable, vec![0; 100].into()),
+                RakPriority::Low,
+                SystemTime::now(),
+            )
+            .unwrap();
+
+        assert!(session.send_capacity() < before);
     }
 
     #[test]

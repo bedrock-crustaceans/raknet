@@ -180,6 +180,10 @@ impl RakServer {
         self.sessions.get(&id).map(RakSessionIntl::rtt)
     }
 
+    pub fn send_capacity(&self, id: RakSessionId) -> Option<usize> {
+        self.sessions.get(&id).map(RakSessionIntl::send_capacity)
+    }
+
     pub fn next_event(&mut self) -> Option<RakServerEvent> {
         self.events.pop_front()
     }
