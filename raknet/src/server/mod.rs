@@ -121,7 +121,8 @@ impl Sans for RakServer {
                 self.blocked.retain(|_, until| now < *until);
                 self.blocked_addrs.retain(|_, until| now < *until);
                 if let Some(rate) = self.config.online_packet_limit {
-                    self.online_buckets.retain(|_, bucket| !bucket.is_full(rate, now));
+                    self.online_buckets
+                        .retain(|_, bucket| !bucket.is_full(rate, now));
                 }
                 self.evict_stale_temp_sessions(now);
                 self.tick_temp_sessions(now)?;
@@ -388,10 +389,7 @@ impl RakServer {
         now: SystemTime,
     ) -> Result<(), RakServerError> {
         if self.online_rate_limited(addr, now) {
-            debug!(
-                "blocking {} for exceeding the online packet limit",
-                addr
-            );
+            debug!("blocking {} for exceeding the online packet limit", addr);
             self.blocked_addrs
                 .insert(addr, now + self.config.block_duration);
             return Ok(());
