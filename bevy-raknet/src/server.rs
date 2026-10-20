@@ -59,6 +59,7 @@ pub struct RakServer {
     sessions: HashMap<RakSessionId, RakSessionIntl>,
     received: VecDeque<(RakSessionId, Box<[u8]>)>,
     events: VecDeque<RakServerEvent>,
+    wakes: HashMap<RakSessionId, SystemTime>,
     buffer: Box<[u8]>,
 }
 
@@ -79,6 +80,7 @@ impl RakServer {
             sessions: HashMap::new(),
             received: VecDeque::new(),
             events: VecDeque::new(),
+            wakes: HashMap::new(),
             intl: RakServerIntl::new(config, addr),
         })
     }
@@ -119,7 +121,14 @@ impl RakServer {
                 now,
             ))?;
 
-            drain_session(session, &self.socket, &mut self.received, &mut disconnected);
+            drain_session(
+                session,
+                &self.socket,
+                &mut self.received,
+                &mut self.wakes,
+                now,
+                &mut disconnected,
+            );
         }
 
         self.remove_sessions(disconnected, now);
@@ -143,7 +152,14 @@ impl RakServer {
                 now,
             ));
 
-            drain_session(session, &self.socket, &mut self.received, &mut disconnected);
+            drain_session(
+                session,
+                &self.socket,
+                &mut self.received,
+                &mut self.wakes,
+                now,
+                &mut disconnected,
+            );
         }
 
         self.remove_sessions(disconnected, now);
@@ -166,7 +182,14 @@ impl RakServer {
 
             let _ = session.handle(RakSessionInput::Disconnect(now));
 
-            drain_session(session, &self.socket, &mut self.received, &mut disconnected);
+            drain_session(
+                session,
+                &self.socket,
+                &mut self.received,
+                &mut self.wakes,
+                now,
+                &mut disconnected,
+            );
         }
 
         self.remove_sessions(disconnected, now);
@@ -184,6 +207,17 @@ impl RakServer {
         self.sessions.get(&id).map(RakSessionIntl::send_capacity)
     }
 
+    /// How long until a session next needs `update` to be called, as requested by the
+    /// sessions themselves. `None` when there are no sessions. Calling `update` earlier,
+    /// for example when the socket becomes readable, is always fine.
+    pub fn next_timeout(&self) -> Option<Duration> {
+        let now = SystemTime::now();
+        self.wakes
+            .values()
+            .map(|at| at.duration_since(now).unwrap_or(Duration::ZERO))
+            .min()
+    }
+
     pub fn next_event(&mut self) -> Option<RakServerEvent> {
         self.events.pop_front()
     }
@@ -191,6 +225,7 @@ impl RakServer {
     fn remove_sessions(&mut self, ids: Vec<(RakSessionId, RakDisconnectReason)>, now: SystemTime) {
         for (id, reason) in ids {
             self.sessions.remove(&id);
+            self.wakes.remove(&id);
             let _ = self.intl.handle(RakServerInput::RemoveSession(id, now));
             self.events
                 .push_back(RakServerEvent::SessionDisconnected { id, reason });
@@ -250,7 +285,14 @@ impl RakServer {
         for session in self.sessions.values_mut() {
             let _ = session.handle(RakSessionInput::Update(now));
 
-            drain_session(session, &self.socket, &mut self.received, &mut disconnected);
+            drain_session(
+                session,
+                &self.socket,
+                &mut self.received,
+                &mut self.wakes,
+                now,
+                &mut disconnected,
+            );
         }
 
         self.remove_sessions(disconnected, now);
@@ -277,6 +319,8 @@ fn drain_session(
     session: &mut RakSessionIntl,
     socket: &UdpSocket,
     received: &mut VecDeque<(RakSessionId, Box<[u8]>)>,
+    wakes: &mut HashMap<RakSessionId, SystemTime>,
+    now: SystemTime,
     disconnected: &mut Vec<(RakSessionId, RakDisconnectReason)>,
 ) {
     let id = session.id;
@@ -287,7 +331,9 @@ fn drain_session(
             }
             RakSessionOutput::Packet(buf) => received.push_back((id, buf)),
             RakSessionOutput::Disconnected(id, reason) => disconnected.push((id, reason)),
-            RakSessionOutput::Wait(_) => {}
+            RakSessionOutput::Wait(duration) => {
+                wakes.insert(id, now + duration);
+            }
         }
     }
 }
